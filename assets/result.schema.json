@@ -1,0 +1,41 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "ReviewResult",
+  "type": "object",
+  "required": ["request_id", "artifact_hash", "artifact_mtime", "pages_seen", "title_confirmed", "findings", "confidence"],
+  "properties": {
+    "request_id": {"type": "string"},
+    "artifact_hash": {"type": "string", "pattern": "^[0-9A-Fa-f]{64}$"},
+    "artifact_mtime": {"type": "string"},
+    "pages_seen": {"type": "array", "items": {"type": "integer"}, "minItems": 1},
+    "title_confirmed": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["page", "title"],
+        "properties": {
+          "page": {"type": "integer"},
+          "title": {"type": "string", "minLength": 1}
+        }
+      }
+    },
+    "findings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["page", "element", "severity", "severity_basis", "issue", "evidence", "fix"],
+        "properties": {
+          "page": {"type": "integer"},
+          "element": {"type": "string"},
+          "severity": {"enum": ["high", "medium", "low"]},
+          "severity_basis": {"type": "string", "minLength": 1},
+          "issue": {"type": "string"},
+          "evidence": {"type": "string", "minLength": 1},
+          "fix": {"type": "string"}
+        }
+      }
+    },
+    "confidence": {"enum": ["high", "medium", "low"]},
+    "limitations": {"type": "array", "items": {"type": "string"}}
+  }
+}
