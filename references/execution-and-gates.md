@@ -28,7 +28,7 @@ Freeze before parallel production; if a fact changes, update the pack first, the
 | # | Action | Gate |
 |---|---|---|
 | 0 | Back up originals, record SHA256 | no edit without backup |
-| 1 | Capability check | no routing before check |
+| 1 | Capability + quota check | no routing before check |
 | 2 | Decompose, board, contract | no board, no start |
 | 3 | Facts pack | no parallel work before freeze |
 | 4 | Produce + independent review | producer never self-reviews |

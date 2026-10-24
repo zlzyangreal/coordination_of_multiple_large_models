@@ -94,6 +94,26 @@ def main():
     print(f"[{'OK' if procs else 'WARN'}] processes: "
           f"{', '.join(procs) if procs else 'none found'}")
 
+    try:
+        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+        from quota import classify, collect, fmt_hours  # noqa: E402
+        q = collect()
+        if q["remaining"] is None:
+            print("[WARN] quota: no rate-limit sample yet; "
+                  "run scripts/quota.py --remaining <pct> --minutes <m>")
+        else:
+            tier, _, _ = classify(q["remaining"], q["hours_left"],
+                                  q["weekly_remaining"])
+            print(f"[OK] quota: 5h {q['remaining']:.0f}% left "
+                  f"(resets in {fmt_hours(q['hours_left'])}), "
+                  f"weekly {q['weekly_remaining']:.0f}% left -> tier {tier[0]} "
+                  f"({tier[2]})")
+            if q["stale"] or q["assumed_fresh"]:
+                print("     quota sample is not from this window; "
+                      "confirm with scripts/quota.py before a large batch")
+    except Exception as exc:  # noqa: BLE001
+        print(f"[WARN] quota: unreadable ({exc})")
+
     proxy_vars = {k: os.environ.get(k) for k in ("HTTPS_PROXY", "HTTP_PROXY", "ALL_PROXY")
                   if os.environ.get(k)}
     print(f"[{'OK' if proxy_vars else 'WARN'}] proxy vars: "

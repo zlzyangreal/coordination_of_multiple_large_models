@@ -7,6 +7,7 @@
 | Process | target client running (Codex / ChatGPT) | name + PID |
 | CLI | absolute path + version | `codex --version` |
 | Models | slugs, reasoning levels, quota | see model-registry.md |
+| Quota | 5 h remaining %, reset time, weekly | `python scripts/quota.py` |
 | Toolchain | python, node, Word/LibreOffice, renderer | absolute paths |
 | Network | egress, proxy vars, Clash/TUN | triage below |
 | Permissions | sandbox mode, target writable, file locks | read-only / workspace-write / full |

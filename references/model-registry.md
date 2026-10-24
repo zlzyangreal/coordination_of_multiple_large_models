@@ -7,7 +7,7 @@ Model = `slug` + `reasoning`. Never merge them.
 | slug | reasoning | role | status | verified |
 |---|---|---|---|---|
 | `deepseek-account/deepseek-flash` | — | lead / execution | default | 2026-10-23 |
-| `gpt-5.6-sol` | `medium` (low…ultra) | vision / review | default | 2026-10-23, codex 0.163 |
+| `gpt-5.6-sol` | `medium` (low…ultra) | vision / review / production (quota-tiered) | default | 2026-10-23, codex 0.163 |
 | new | — | — | verify first | — |
 
 Unregistered or unverified = unusable. A failed model is never reported as a "fallback".
@@ -22,20 +22,30 @@ Unregistered or unverified = unusable. A failed model is never reported as a "fa
 
 ## Routing
 
-1. Match capability: vision/layout → strongest visual model; long-form writing → strongest writer; code/format/batch → executor; independent review → different family from the producer.
+1. Match capability: vision/layout → strongest visual model at **any** quota level; long-form
+   writing → strongest writer **while quota allows it**; code/format/batch → executor;
+   independent review → different family from the producer.
 2. One artifact, at most two producers; more requires explicit boundaries.
 3. Per model: ≤2 concurrent calls; serialize when unstable.
 4. Shared facts pack; no divergent assumptions.
 5. Handoffs must be self-contained — no "as discussed above".
 
-## Budget and stop lines
+## Budget: quota-tiered
 
-| Model | Calls | Cap | Stop | Note |
-|---|---|---|---|---|
-| lead | — | main pool | — | task-level control |
-| reviewer | N | N×1.5 | 80% | batch images into one call |
+GPT's share is not fixed. Read the pool, then allocate:
 
-- Review > generation > polish when budget is tight.
+| Tier | Lead | GPT | Effort |
+|---|---|---|---|
+| S / A | deterministic parts, integration | production + gates (S also gets a second pass) | medium…xhigh |
+| B | all production | gates only, batched | low/medium |
+| C | all text work | vision only | low |
+| R | everything | one visual gate, then stop | low |
+
+- Read before routing and re-read after every batch: `python scripts/quota.py`; bands,
+  burn/pace/weekly overrides, reserve and worked examples live in [quota-routing.md](quota-routing.md).
+- Review > generation > polish when the pool is tight; at S the order flips — produce first,
+  because expiring quality is worth more than a third polish pass.
+- Mechanical edits, scripts, file ops: always the lead, at every tier.
 - Two consecutive failures on one model: stop retrying, change path.
 - ≤3 layout/format passes; afterwards log issues only.
-- Final report: calls, token order of magnitude, wait time, remaining budget.
+- Final report: 5 h and weekly used start→end, calls, tier path, wait time, wasted capacity.
