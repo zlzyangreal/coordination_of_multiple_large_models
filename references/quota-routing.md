@@ -12,8 +12,9 @@ Both are read from the CLI, not guessed.
    exists is the failure this policy exists to fix.
 3. **Utilization ≠ token burn.** Spending quota on file ops, renames, scripts or formatting
    is waste, not utilization: the lead does those faster and with fewer errors.
-4. **Two gates are non-negotiable**: the delivery visual gate (only GPT can see) and the
-   independent review (producer never signs off). Everything else is negotiable.
+4. **Two gates are non-negotiable**: the independent review, and the visual gate when the
+   artifact has a visual surface (only the multimodal model can see it). Everything else is
+   negotiable.
 5. **Re-read, never remember.** Percent is 1-pt coarse and invisible between calls.
 
 ## Read (gate)
@@ -53,8 +54,8 @@ python scripts/quota.py --note "before draft"   # append a row to _work/quota_le
 |---|---|---|---|---|
 | **S** surplus | ≥65% | integrate, scripted checks, arbitrate, deliver | production + all gates + optional second pass | one per artifact |
 | **A** normal | 50–65% | deterministic parts | quality-sensitive production + every gate | one per artifact group |
-| **B** conserve | 30–50% | all production | gates only, no exploratory passes | batch artifacts and pages |
-| **C** vision-only | 12–30% | all text / code / format | vision and layout judgement only | batch all images into one call |
+| **B** conserve | 30–50% | all production | gates only, no exploratory passes | batch units and artifacts |
+| **C** vision-only | 12–30% | all text / code / format | visual judgement only (UI, charts, renders, screenshots) | batch all images into one call |
 | **R** reserve | <12% | everything | at most the single delivery visual gate | one call, then stop |
 
 **U - unknown** is not a band: no usable reading exists (expired sample, app-server down,
@@ -76,7 +77,7 @@ One exception, written in the ledger: tier **R** with a gate that cannot wait �
 for that call only, then restore. Any other change needs the user's explicit request.
 
 The quota levers, in order of effect: **who produces** (lead vs GPT) → **number of passes** →
-**number of calls** (batching) → **scope** (pages/artifacts). Effort is not on the list.
+**number of calls** (batching) → **scope** (units/artifacts). Effort is not on the list.
 
 ## Adjustments, applied in this order
 
@@ -94,9 +95,9 @@ The quota levers, in order of effect: **who produces** (lead vs GPT) → **numbe
 
 ## Reserve
 
-Keep **8–12%** for the end-of-delivery visual gate. Text review is deferrable until after
-reset; the visual gate is not deferrable if the deliverable contains pages, figures, charts
-or images. If visuals cannot be gated because quota ran out, say so in the delivery note —
+Keep **8–12%** for the end-of-delivery visual gate. Text and code review are deferrable until
+after reset; the visual gate is not deferrable **if the artifact has a visual surface** (UI,
+charts, rendered documents, screenshots). If visuals cannot be gated because quota ran out, say so in the delivery note —
 do not ship as if it passed.
 
 ## What "more GPT work" means
@@ -126,8 +127,8 @@ backlog is.
   a large context are cheaper than they look in raw token totals.
 - Effort does multiply cost (`low`→`xhigh` is roughly 2–4×), which is exactly why it is left at
   one setting: it is a quality knob, not a budget knob.
-- Images are priced per image: batch every page into one call at C, and never send a page
-  twice.
+- Images are priced per image: batch every visual unit into one call at C, and never send the
+  same image twice.
 - Keep `_work/quota_ledger.md` (the `--note` rows). Three logged batches give per-job prices,
   after which plan in percent ("one review ≈ 6 pt") instead of vibes.
 
@@ -154,10 +155,10 @@ backlog is.
 
 | Reading | Tier | What happens |
 |---|---|---|
-| 78% left, 4 h | S | GPT drafts the sections; lead builds; GPT visual gate; one extra consistency pass; end ≤25% |
+| 78% left, 4 h | S | GPT does the design/authoring pass; lead builds; GPT audit; one extra consistency pass; end ≤25% |
 | 62% left, 3.5 h | A | GPT produces the quality-sensitive parts + both gates; no speculative passes |
 | 46% left, 2 h | B | Lead produces everything; one batched review; 8 pt held for the visual gate |
-| 28% left, 90 min | C | Lead produces; one batched vision+layout pass at the end; text review deferred |
+| 28% left, 90 min | C | Lead produces; one batched visual pass at the end; text/code review deferred |
 | 44% left, 40 min | S (burn) | Run the queued adversarial pass now; it expires with the window |
 | 14% left, 3 h | C | Vision only; schedule text work after the reset at the printed time |
 | 62% left but weekly 20% | B (weekly) | Weekly cap wins; batch, no extra passes |

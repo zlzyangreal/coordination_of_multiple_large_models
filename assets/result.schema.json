@@ -2,33 +2,51 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "title": "ReviewResult",
   "type": "object",
-  "required": ["request_id", "artifact_hash", "artifact_mtime", "pages_seen", "title_confirmed", "findings", "confidence"],
+  "required": ["request_id", "artifact_hash", "artifact_mtime", "units_seen", "units_confirmed", "findings", "confidence"],
   "properties": {
     "request_id": {"type": "string", "minLength": 1},
     "artifact_hash": {"type": "string", "pattern": "^[0-9A-Fa-f]{64}$"},
     "artifact_mtime": {"type": "string", "minLength": 1},
-    "pages_seen": {"type": "array", "items": {"type": "integer"}, "minItems": 1},
-    "title_confirmed": {
+    "units_seen": {
+      "type": "array",
+      "minItems": 1,
+      "items": {"type": "string", "minLength": 1},
+      "description": "Ids from the envelope's units[] that were actually opened"
+    },
+    "units_confirmed": {
       "type": "array",
       "minItems": 1,
       "items": {
         "type": "object",
-        "required": ["page", "title"],
+        "required": ["unit", "observed"],
         "properties": {
-          "page": {"type": "integer"},
-          "title": {"type": "string", "minLength": 1}
+          "unit": {"type": "string", "minLength": 1},
+          "observed": {
+            "type": "string",
+            "minLength": 1,
+            "description": "What the reviewer saw at that unit: heading, symbol, behaviour, checksum"
+          }
         }
-      }
+      },
+      "description": "Proves the reviewer opened the unit, not just echoed the hash"
     },
     "findings": {
       "type": "array",
       "items": {
         "type": "object",
-        "required": ["page", "element", "severity", "severity_basis", "issue", "evidence", "fix", "origin"],
+        "required": ["location", "target", "severity", "severity_basis", "issue", "evidence", "fix", "origin"],
         "properties": {
           "id": {"type": "string"},
-          "page": {"type": "integer"},
-          "element": {"type": "string", "minLength": 1},
+          "location": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Where: src/api.py:42, page 12, module auth, endpoint /login, cell B7"
+          },
+          "target": {
+            "type": "string",
+            "minLength": 1,
+            "description": "The element inside that location: function, section, table, clause"
+          },
           "severity": {"enum": ["high", "medium", "low", "notice"]},
           "severity_basis": {"type": "string", "minLength": 1},
           "issue": {"type": "string", "minLength": 1},
@@ -36,7 +54,7 @@
           "fix": {"type": "string", "minLength": 1},
           "origin": {
             "enum": ["independent", "advisory-derived"],
-            "description": "independent = reviewer found it on its own; advisory-derived = the reviewed text came from this same model's earlier draft, so this chapter is not independently reviewed"
+            "description": "independent = reviewer found it; advisory-derived = the reviewed text/code came from this same model's earlier draft, so that unit is not independently reviewed"
           }
         }
       }

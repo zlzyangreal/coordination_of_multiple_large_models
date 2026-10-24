@@ -33,7 +33,7 @@ ROUNDS = os.path.join("_work", "rounds.md")
 
 
 def read_contract(path=SKILL):
-    with open(path, encoding="utf-8") as fh:
+    with open(path, encoding="utf-8-sig") as fh:
         text = fh.read()
     version = re.search(r"^\s*version:\s*(\S+)\s*$", text, re.M)
     updated = re.search(r"^\s*updated:\s*(\S+)\s*$", text, re.M)
@@ -48,7 +48,7 @@ def read_contract(path=SKILL):
 
 def load_pin():
     try:
-        with open(PIN, encoding="utf-8") as fh:
+        with open(PIN, encoding="utf-8-sig") as fh:
             return json.load(fh)
     except (OSError, ValueError):
         return None
@@ -109,8 +109,9 @@ def cmd_status(args):
                 quota_text = f"quota 5h {q['remaining']:.0f}% / week {weekly}"
         except Exception:  # noqa: BLE001
             quota_text = "quota unreadable"
-    print(f"SKILL v{pin.get('version')} (pinned {str(pin.get('pinned_at'))[11:16]}) "
-          f"| {quota_text} | 阶段：{stage}")
+    pinned_at = pin.get("pinned_at")
+    label = f"pinned {pinned_at[11:16]}" if pinned_at else "unpinned"
+    print(f"SKILL v{pin.get('version')} ({label}) | {quota_text} | 阶段：{stage}")
     return 0
 
 

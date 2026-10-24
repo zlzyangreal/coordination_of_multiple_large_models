@@ -5,7 +5,7 @@
 Checks, in order:
     1. JSON Schema (draft-07 subset used by assets/result.schema.json);
     2. envelope cross-check: request_id, artifact_hash, artifact_mtime must echo;
-    3. coverage: every page in the envelope's page_map must appear in title_confirmed;
+    3. coverage: every unit in the envelope's units must appear in units_confirmed;
     4. origin accounting: independent vs advisory-derived findings (advisory-derived
        chapters are not independently reviewed, whatever the score says).
 
@@ -77,7 +77,7 @@ def check(node, schema, path, errors):
 
 def load_envelope(path):
     """Flat envelope: pyyaml when present, regex fallback otherwise."""
-    with open(path, encoding="utf-8") as fh:
+    with open(path, encoding="utf-8-sig") as fh:
         text = fh.read()
 
     def norm(value):
@@ -94,27 +94,23 @@ def load_envelope(path):
     out = {}
     for line in text.splitlines():
         m = re.match(r'^([A-Za-z_][\w]*):\s*(.+?)\s*$', line)
-        if m and not m.group(1).startswith("page"):
+        if m and m.group(1) not in ("units", "prior_findings", "acceptance", "scope"):
             out[m.group(1)] = m.group(2).strip().strip('"')
     return out
 
 
-def envelope_pages(env):
-    pages = env.get("page_map") or []
-    if isinstance(pages, dict):
-        pages = list(pages.values())
-    result = []
-    for item in pages if isinstance(pages, list) else []:
-        if isinstance(item, dict) and isinstance(item.get("page"), int):
-            result.append(item["page"])
-    return result
+def envelope_units(env):
+    units = env.get("units") or []
+    if isinstance(units, dict):
+        units = list(units.values())
+    return [str(u["id"]) for u in units if isinstance(u, dict) and u.get("id")]
 
 
 def validate_files(result_path, schema_path=DEFAULT_SCHEMA, envelope_path=None):
     """Return (result, errors, warnings); raises OSError/ValueError on unreadable input."""
-    with open(result_path, encoding="utf-8") as fh:
+    with open(result_path, encoding="utf-8-sig") as fh:
         result = json.load(fh)
-    with open(schema_path, encoding="utf-8") as fh:
+    with open(schema_path, encoding="utf-8-sig") as fh:
         schema = json.load(fh)
 
     errors, warnings = [], []
@@ -128,16 +124,16 @@ def validate_files(result_path, schema_path=DEFAULT_SCHEMA, envelope_path=None):
             want, got = env.get(key), result.get(field)
             if want and got and str(want).strip() != str(got).strip():
                 errors.append(f"$.{field}: {got!r} != envelope {key} {want!r}")
-        wanted_pages = envelope_pages(env)
-        confirmed = {t.get("page") for t in result.get("title_confirmed") or []
+        wanted = envelope_units(env)
+        confirmed = {str(t.get("unit")) for t in result.get("units_confirmed") or []
                      if isinstance(t, dict)}
-        for page in wanted_pages:
-            if page not in confirmed:
-                errors.append(f"$.title_confirmed: page {page} from page_map was not confirmed")
-        seen = set(result.get("pages_seen") or [])
-        missing = [p for p in wanted_pages if p not in seen]
+        for unit in wanted:
+            if unit not in confirmed:
+                errors.append(f"$.units_confirmed: unit '{unit}' from the envelope was not confirmed")
+        seen = {str(u) for u in result.get("units_seen") or []}
+        missing = [u for u in wanted if u not in seen]
         if missing:
-            errors.append(f"$.pages_seen: envelope pages not reported as seen: {missing}")
+            errors.append(f"$.units_seen: envelope units not reported as seen: {missing}")
 
     findings = result.get("findings") if isinstance(result, dict) else None
     if isinstance(findings, list):
@@ -145,7 +141,7 @@ def validate_files(result_path, schema_path=DEFAULT_SCHEMA, envelope_path=None):
                        if isinstance(f, dict) and f.get("origin") == "advisory-derived")
         if advisory:
             warnings.append(
-                f"{advisory} finding(s) marked advisory-derived: those chapters are NOT "
+                f"{advisory} finding(s) marked advisory-derived: those units are NOT "
                 f"independently reviewed - say so in the delivery note")
     return result, errors, warnings
 

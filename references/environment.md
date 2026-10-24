@@ -9,7 +9,7 @@
 | Models | slugs, reasoning levels, quota | see model-registry.md |
 | Quota | 5 h remaining %, reset time, weekly | `python scripts/quota.py` (live app-server) |
 | Runner | production call path present and working | `scripts/run_gpt.py` |
-| Toolchain | python, node, Word/LibreOffice, renderer | absolute paths |
+| Toolchain | whatever the artifact needs: compiler/interpreter, test runner, package manager, linter, renderer, diff tool | absolute paths |
 | Network | egress, proxy vars, Clash/TUN | triage below |
 | Permissions | sandbox mode, target writable, file locks | read-only / workspace-write / full |
 | Skills | available skills/plugins | names |
@@ -48,10 +48,10 @@ Observed 2026-10-23: without proxy, identical command looped `Reconnecting 5/5`;
 
 | Task | Minimum | Note |
 |---|---|---|
-| Read-only review writing only to `result_path` | read-only + writable result dir | default for reviewers |
-| Build, render, write intermediates | workspace-write | default for production |
+| Review, read-only, writes nothing | read-only | default for reviewers; the result is captured by the runner |
+| Build, test, write intermediates | workspace-write | default for production |
 | Modify config outside workspace / install deps | danger-full-access | user must know |
 
 - A writable task must not run in a read-only sandbox.
 - Probe-write the target directory before starting.
-- File locks (Word/PDF export) must be released; do not silently retry a write more than twice.
+- File locks (open documents, databases, large binaries) must be released; do not silently retry a write more than twice.

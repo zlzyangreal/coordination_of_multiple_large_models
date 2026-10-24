@@ -52,7 +52,7 @@ try:
 except Exception:  # noqa: BLE001
     reap_turns = None
 
-SKILL_VERSION = "1.5.0"
+SKILL_VERSION = "1.6.0"
 CALL_DIR = os.path.join("_work", "calls")
 
 
@@ -267,7 +267,7 @@ def main():
     model = args.model or config_value("model", "gpt-5.6-sol")
     effort = args.effort or config_value("model_reasoning_effort", "medium")
     if args.prompt_file:
-        with open(args.prompt_file, encoding="utf-8") as fh:
+        with open(args.prompt_file, encoding="utf-8-sig") as fh:
             prompt = fh.read()
     else:
         prompt = args.prompt

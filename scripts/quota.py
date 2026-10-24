@@ -76,7 +76,7 @@ PLAN = {
     },
     "C": {
         "lead": "all text / code / format work",
-        "gpt": "vision and layout judgement only, batched",
+        "gpt": "visual judgement only (UI, charts, renders), batched",
         "batch": "batch every image into one call",
         "next": "defer text review until after reset",
     },
@@ -149,7 +149,7 @@ def live_rate_limits(timeout=LIVE_TIMEOUT):
         return None
     messages = [
         {"jsonrpc": "2.0", "id": 1, "method": "initialize",
-         "params": {"clientInfo": {"name": "coordination-skill", "version": "1.4.0"}}},
+         "params": {"clientInfo": {"name": "coordination-skill", "version": "1.6.0"}}},
         {"jsonrpc": "2.0", "method": "initialized", "params": {}},
         {"jsonrpc": "2.0", "id": 2, "method": "account/rateLimits/read", "params": {}},
     ]

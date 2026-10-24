@@ -1,9 +1,9 @@
 # 多模型协作 SKILL（中文说明）
 
-用于 **2 个及以上大模型协作** 的调度与对接：谁负责、怎么交接、评审结论怎么判断可信、出错怎么退。只管协作机制，不管写作、排版、设计本身。
+用于 **2 个及以上大模型协作** 的调度与对接：谁负责、怎么交接、评审结论怎么判断可信、出错怎么退。只管协作机制——代码、文档、数据、方案都适用；代码风格、写作、排版这些领域规则属于项目自己的事实包与 DoD，不写进这里。
 
 - 仓库：<https://github.com/zlzyangreal/coordination_of_multiple_large_models>
-- 版本：1.5.0（2026-10-24）
+- 版本：1.6.0（2026-10-24）
 - 上一代：`多模型协作Spec.md` v2.4.1，已冻结，仅作留档
 
 ## 安装
@@ -54,10 +54,10 @@ coordination_of_multiple_large_models/
 │   ├── session.py               契约锚点：pin / check（漂移）/ status（状态行）/ note
 │   ├── run_gpt.py               唯一调用入口：持久化、评审 schema 校验、前后额度、自动台账
 │   ├── quota.py                 实时额度（app-server）→ 档位 S/A/B/C/R/U → 分工与调用方式
-│   ├── validate_result.py       评审结果 JSON Schema + 回显 + 页覆盖校验（拦截不合规结果）
+│   ├── validate_result.py       评审结果 JSON Schema + 回显 + 单元覆盖校验（拦截不合规结果）
 │   ├── schema_for_codex.py      把契约派生成 codex strict 模式的 schema（--output-schema 必须）
 │   ├── reap_turns.py            收尾卡在 inProgress 的回合（先备份、只改该状态）
-│   └── build_envelope.py        生成请求信封（hash/mtime/page_map/prior_findings/schema 路径）
+│   └── build_envelope.py        生成请求信封（hash/mtime/units/prior_findings/schema 路径）
 └── assets/
     ├── envelope.example.yaml    信封示例（零写盘 + prior_findings）
     ├── result.schema.json        评审结果的结构约束
@@ -120,7 +120,7 @@ python scripts/quota.py --note "交稿前"                  # 往 _work/quota_le
 - 生成的 `.ps1` 必须是 **UTF-8 with BOM**（或纯 ASCII），否则 PowerShell 5.1 把中文按 ANSI 解析，报的却是无关的 `{` 语法错；能用 `.py` 就别生成 `.ps1`。
 - 不经过 `codex exec` 的调用（直连 API、别的编排层）本来就不产生 rollout，不在额度读取范围内——报告里要写明这条边界，别当成"监控坏了"。
 
-## 契约与门（v1.5.0）
+## 契约与门（v1.5.0 起）
 
 第二份反馈单（对 v1.4.0，9 条）指出：脚本能调用了，但"谁负责版本、结果落哪、证据怎么绑、谁不能审谁"四个断点没闭合。这版把每个断点落到一个执行点：
 
@@ -128,22 +128,22 @@ python scripts/quota.py --note "交稿前"                  # 往 _work/quota_le
 |---|---|
 | 只读评审却要求写 `result_path`（必然失败） | 评审**零写盘**：结果作为最终消息由 `run_gpt.py --output` 捕获，lead 校验后复制到 `result_path`。信封拆成 `artifact_access: read-only` + `result_capture: runner`；`read-only + direct` 在构建期直接报错 |
 | 契约会话中途被替换，无人察觉 | 开工 `session.py pin`，每轮只比对不重读；变了记一行偏差、**继续按旧版执行**；交付写明"pinned vX / 仓库 vY" |
-| `--schema` 是死的，11/11 条 finding 缺字段全放行 | 评审调用强制 `--schema assets/result.schema.json`；runner 收完即校验（回显 mtime、页覆盖、必填字段），不合规 exit 3。另有 `validate_result.py` 兜住非 runner 来源。删掉"缺 `severity_basis` 按 medium"的旧兜底。**注意**：codex 的 `--output-schema` 走 strict 模式（每个对象要 `additionalProperties: false`、所有字段 must-required），手写契约直接喂会 400，runner 会自动派生 `<request_id>.codex-schema.json` 再交给 codex |
+| `--schema` 是死的，11/11 条 finding 缺字段全放行 | 评审调用强制 `--schema assets/result.schema.json`；runner 收完即校验（回显 mtime、单元覆盖、必填字段），不合规 exit 3。另有 `validate_result.py` 兜住非 runner 来源。删掉"缺 `severity_basis` 按 medium"的旧兜底。**注意**：codex 的 `--output-schema` 走 strict 模式（每个对象要 `additionalProperties: false`、所有字段 must-required），手写契约直接喂会 400，runner 会自动派生 `<request_id>.codex-schema.json` 再交给 codex |
 | 被拒条目跨轮重复提 | 信封必填 `prior_findings`，由 `build_envelope.py --ledger` 从台账自动生成；缺 `--ledger` 构建失败 |
-| 事实包把"页数上限"当硬约束审 | 事实包拆 `constraints`（违反即返工）与 `budgets`（超限只报 `notice`，不得作否决理由）；模板 `assets/facts-pack.example.md` |
+| 事实包把"规模上限"当硬约束审（页数、行数、PR 大小都是预算） | 事实包拆 `constraints`（违反即返工）与 `budgets`（超限只报 `notice`，不得作否决理由）；模板 `assets/facts-pack.example.md` |
 | 同一模型的草稿由它自己放行 | advisory draft 计入生产：对应 finding 标 `origin: advisory-derived`，不计入独立评审；只有单模型可用时，交付必须写"本轮评审非独立（同源）" |
 | 额度读取与台账没有执行点 | "一次 runner 调用 = 一批"；runner 每次自动写一行 `_work/quota_ledger.md`；每条用户消息读一次 live 额度 |
-| SKILL 可在会话内静默失效 | 每轮首行状态行：`SKILL v1.5.0 (pinned 19:36) \| quota 5h 78% / week 96% \| 阶段：…`；中断当场声明并补门；复盘固定问"本轮 skill 是否中断" |
-| 证据没绑定到实际被读的东西 | 派生文本（dump）在 rebuild 后立即生成，`build_envelope.py --text-dump` 把 sha256(8)+mtime 记进 `_work/rounds.md`；未记录前交付不得声称"版本已绑定"（信封结构按决议暂不动） |
+| SKILL 可在会话内静默失效 | 每轮首行状态行：`SKILL v1.6.0 (pinned 19:36) \| quota 5h 78% / week 96% \| 阶段：…`；中断当场声明并补门；复盘固定问"本轮 skill 是否中断" |
+| 证据没绑定到实际被读的东西 | 评审实际读的派生件（diff / dump / 导出）在调用前立即生成，`build_envelope.py --review-input` 把 sha256(8)+mtime 记进 `_work/rounds.md`；未记录前交付不得声称"版本已绑定"（信封结构按决议暂不动） |
 
-一句话：v1.4.0 解决"怎么调用"，v1.5.0 解决"调用了算不算数"。
+一句话：v1.4.0 解决"怎么调用"，v1.5.0 解决"调用了算不算数"，v1.6.0 解决"换到代码/数据/方案也成立"。
 
 ## 怎么用
 
 1. 开工：`python scripts/session.py pin`（锁契约版本）+ `python scripts/check_env.py --short-call`（确认出口，顺带打一行实时额度）。
 2. 每轮：首行 `python scripts/session.py status --stage <阶段>`；变了就跑 `session.py check`，记偏差但不切版本。
 3. 分工前：`python scripts/quota.py`，照它给的档位决定"谁生产、GPT 做什么、怎么拆调用"。
-4. 评审前：`python scripts/build_envelope.py --artifact <文件> --out <yaml> --ledger <台账> --pages 4,8`，第一轮加 `--init-ledger`。
+4. 评审前：`python scripts/build_envelope.py --artifact <文件或目录> --out <yaml> --ledger <台账> --unit "api::src/api.py:40-90::handle_request"`，第一轮加 `--init-ledger`。
 5. 调用：`python scripts/run_gpt.py --prompt-file <brief> --request-id <编号> --sandbox read-only --schema assets/result.schema.json --envelope <yaml> --output <payload> --result-path <结果>`，不合 schema 会 exit 3。
 6. 收结论：`python scripts/validate_result.py --result <结果> --envelope <yaml>` 通过后再逐条回源验证，采纳/拒绝写进台账（被拒条目下轮自动进 `prior_findings`）。
 7. 结束：回报额度用量、调用统计、偏差、未闭环项，并回答"本轮 skill 是否中断"；临时文件清掉，快照每文件最多留 3 份。
@@ -159,6 +159,7 @@ python scripts/quota.py --note "交稿前"                  # 往 _work/quota_le
 
 | 版本 | 日期 | 变更 |
 |---|---|---|
+| 1.6.0 | 2026-10-24 | 去特化：评审单元由"页"改为通用 `units`（文件 / 片段 / diff / 接口 / 单元格 / 页……），`page_map`/`pages_seen`/`title_confirmed` 改为 `units`/`units_seen`/`units_confirmed`；目录工件改用树哈希；DoD、事实包、环境、清理里的文档/排版专用表述移除；schema 强制与零写盘不变 |
 | 1.5.0 | 2026-10-24 | 修第二份反馈单 BUG-1~9：评审零写盘（`artifact_access`/`result_capture`）、契约 pin 与漂移（`session.py`）、评审强制 schema 并在 runner 内校验（exit 3，另加 `validate_result.py`）、信封必填 `prior_findings` 由台账生成、事实包拆 constraints/budgets、advisory draft 计入生产（`origin`）、每消息读额度 + runner 自动台账、每轮状态行与中断声明；新增 `schema_for_codex.py`（codex strict 模式派生）与 `assets/facts-pack.example.md` |
 | 1.4.0 | 2026-10-24 | 修反馈单 BUG-1~6：额度改实时源（app-server `account/rateLimits/read`），过期样本报 `U` 不再伪造成 100%；新增 `scripts/run_gpt.py` 统一调用入口（默认持久化、运行时解析 codex、前后额度、调用记录）与 `scripts/reap_turns.py`（收尾 `inProgress`）；新增 `references/calling-gpt.md` 与 `assets/call.schema.json`；补 `.ps1` BOM 与 `bin/<hash>` 约束 |
 | 1.3.1 | 2026-10-24 | 思考强度不再随档位升降：固定按配置值（`medium`）跑，只有 R 档单次门可降一档并记录；额度杠杆改为"谁生产 / 几遍 / 几次调用 / 范围"，`quota.py` 打印配置强度 |
@@ -167,4 +168,4 @@ python scripts/quota.py --note "交稿前"                  # 往 _work/quota_le
 | 1.1.0 | 2026-10-23 | 由单文件改为标准 skill 结构（SKILL.md + references + scripts + assets） |
 | 1.0.0 | 2026-10-23 | 由 `多模型协作Spec.md` v2.4.1 转为单文件 skill |
 
-早期经验来自 2026-10-20、10-21（晚间 / 对接）、10-23（机制）四份协作复盘；只取协作部分，原始记录在 `F:\deepseek_workspace\parper_writing\`。
+早期经验来自 2026-10-20 至 10-24 的多次协作复盘（写作、评审、脚本化交付）；只取协作机制部分。

@@ -22,8 +22,9 @@ Unregistered or unverified = unusable. A failed model is never reported as a "fa
 
 ## Routing
 
-1. Match capability: vision/layout → strongest visual model at **any** quota level; long-form
-   writing → strongest writer **while quota allows it**; code/format/batch → executor;
+1. Match capability: visual artifacts (UI, charts, screenshots, rendered output) → the only
+   multimodal model, at **any** quota level; reasoning-heavy design or long-form authoring →
+   strongest reasoning model **while quota allows it**; mechanical code/format/batch → executor;
    independent review → different family from the producer.
 2. One artifact, at most two producers; more requires explicit boundaries.
 3. Per model: ≤2 concurrent calls; serialize when unstable.
@@ -37,8 +38,8 @@ GPT's share is not fixed. Read the pool, then allocate:
 | Tier | Lead | GPT | Calls |
 |---|---|---|---|
 | S / A | deterministic parts, integration | production + gates (S also gets a second pass) | one per artifact / group |
-| B | all production | gates only, batched | batch pages and artifacts |
-| C | all text work | vision only | batch all images |
+| B | all production | gates only, batched | batch units and artifacts |
+| C | all text/code work | visual units only | batch all images into one call |
 | R | everything | one visual gate, then stop | one call |
 
 - `model_reasoning_effort` stays at the configured level (`medium`); tiers change who produces
@@ -50,5 +51,5 @@ GPT's share is not fixed. Read the pool, then allocate:
   because expiring quality is worth more than a third polish pass.
 - Mechanical edits, scripts, file ops: always the lead, at every tier.
 - Two consecutive failures on one model: stop retrying, change path.
-- ≤3 layout/format passes; afterwards log issues only.
+- ≤3 formatting/restructure passes; afterwards log issues only.
 - Final report: 5 h and weekly used start→end, calls, tier path, wait time, wasted capacity.

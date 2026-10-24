@@ -32,8 +32,8 @@
 
 ## Cleanup
 
-- Delete `.err` logs, intermediate renders, trial PDFs, one-off scripts at stage end; keep evidence in the ledger or postmortem, not as files.
-- `_work/` over 2 GB: delete oldest snapshots and renders. `fist_output/` holds finals only.
+- Delete error logs, intermediate builds/exports, throwaway scripts at stage end; keep evidence in the ledger or postmortem, not as files.
+- `_work/` over 2 GB: delete oldest snapshots and build outputs. The finals directory holds finals only.
 - Snapshot cap: 3 per file, no per-edit archives.
 
 ## Escalate immediately

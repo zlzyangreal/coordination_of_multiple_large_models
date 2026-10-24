@@ -76,7 +76,7 @@ def main():
     ap.add_argument("--stdout", action="store_true")
     args = ap.parse_args()
     try:
-        with open(args.schema, encoding="utf-8") as fh:
+        with open(args.schema, encoding="utf-8-sig") as fh:
             schema = json.load(fh)
     except (OSError, ValueError) as exc:
         print(f"[FAIL] cannot read schema: {exc}")

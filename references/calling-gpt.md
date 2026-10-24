@@ -52,7 +52,7 @@ python scripts/run_gpt.py --prompt-file _work/review/brief_v6.md --cd _work --re
 - The brief ends with "return the JSON as your final message, write no files". Write access is
   neither needed nor granted; `read-only + direct` is rejected by `build_envelope.py`.
 - `--schema` makes codex emit schema-shaped output; the runner then validates the captured
-  payload (echoed `artifact_mtime`, `title_confirmed` coverage, required findings fields) and
+  payload (echoed `artifact_mtime`, unit coverage, required findings fields) and
   exits `3` instead of letting a non-conforming result become "the review passed".
 - **Strict-mode gotcha**: codex forwards `--output-schema` to the API with `strict: true`,
   which rejects plain draft-07 (every object needs `additionalProperties: false`, every

@@ -14,40 +14,63 @@ to result_path" guarantees a failed round under a read-only sandbox.
 
 `read-only + direct` is impossible; `build_envelope.py` rejects it at build time.
 
+## Units: what the reviewer must actually open
+
+Artifacts are not always paginated. A **unit** is any slice a reviewer has to look at:
+
+| Kind | `locator` example | `expected` example |
+|---|---|---|
+| `file` | `src/api.py:40-90` | `handle_request` |
+| `diff` | `diffs/PR-214.patch` | `no behaviour change in retry path` |
+| `section` | `docs/arch.md#2.4` | `"2.4 Failure modes"` |
+| `page` | `_work/renders/p004.png` | `"（一）国内外研究现状"` |
+| `endpoint` | `GET /api/v1/orders` | `403 on missing scope` |
+| `cell` | `report.xlsx!Budget!B2:H9` | `totals row present` |
+| `symbol` | `pkg/auth/token.py::refresh` | `refresh()` |
+
+A unit carries `id`, `kind`, `locator`, `expected`. The reviewer must report every unit in
+`units_seen` **and** in `units_confirmed` (with what it actually observed). That is what makes
+"the reviewer opened it" decidable instead of asserted.
+
 ## Request envelope (lead → reviewer)
 
 | Field | Required | Notes |
 |---|---|---|
 | `request_id` | yes | unique |
 | `skill_version`, `skill_pinned_at` | yes | which contract built this envelope (session pin) |
-| `artifact` | yes | absolute path |
-| `version_hash` | yes | SHA256 |
+| `artifact` | yes | absolute path (file or directory) |
+| `version_hash` | yes | SHA256 of the file, or a tree hash (paths + file hashes) when the artifact is a directory |
 | `artifact_mtime` | yes | ISO 8601 with offset |
 | `artifact_access` | yes | default `read-only` |
 | `result_capture` | yes | default `runner` |
 | `output_path` | yes | payload path; differs from artifact and result |
 | `result_path` | yes | written by the lead after validation, never by the reviewer |
 | `output_schema` | yes | **absolute path** to a JSON Schema (`assets/result.schema.json`) |
-| `page_map` | paginated | page → `p009.png` → expected title |
-| `scope` | yes | pages/sections under review; "others untouched" |
+| `units` | yes | list of `{id, kind, locator, expected}`; `[]` only for an "open" review |
+| `scope` | yes | what is in and out; "others untouched" |
 | `acceptance` | yes | itemized, decidable |
 | `prior_findings` | yes | closed items from `review_ledger.md`; `[]` for round 1; generated, never hand-written |
 | `priority` / `deadline` | no | |
 
-Pre-send: artifact exists and hash/mtime match; page map complete and titled; schema path
-exists; `prior_findings` regenerated from the current ledger; three paths distinct;
-`capture=runner` (or a successful write probe for `direct`).
+Pre-send: artifact exists and hash/mtime match; every unit locator exists and has an
+`expected`; schema path exists; `prior_findings` regenerated from the current ledger; three
+paths distinct; `capture=runner` (or a successful write probe for `direct`).
 
 Generate:
 
 ```bash
-python scripts/build_envelope.py --artifact report_v6.docx --out _work/review/env_v6.yaml \
-    --ledger _work/review_ledger.md --pages 4,8,13 --scope "只审 2.1-2.4" \
-    --text-dump _work/v6.dump.txt
+python scripts/build_envelope.py --artifact src/ --out _work/review/env_r3.yaml \
+    --ledger _work/review_ledger.md \
+    --unit "api::src/api.py:40-90::handle_request" \
+    --unit "retry::src/retry.py::backoff capped" \
+    --unit "tests::tests/test_retry.py::" \
+    --scope "retry + error handling only" \
+    --review-input diffs/PR-214.patch
 ```
 
-Round 1 only: add `--init-ledger` to create the header. Any later round without a real
-ledger fails the build — forgetting the closed items is how duplicates get re-raised.
+`--units-file` accepts a YAML list or TSV (`id<TAB>locator<TAB>expected<TAB>kind`).
+Round 1 only: add `--init-ledger` to create the header. Any later round without a real ledger
+fails the build — forgetting the closed items is how duplicates get re-raised.
 
 ## Result schema (reviewer → lead)
 
@@ -55,38 +78,39 @@ ledger fails the build — forgetting the closed items is how duplicates get re-
 {
   "request_id": "R20261024-07",
   "artifact_hash": "...",
-  "artifact_mtime": "2026-10-23T23:05:32+08:00",
-  "pages_seen": [9, 10],
-  "title_confirmed": [{"page": 9, "title": "2.4 Comparison of representative methods"}],
+  "artifact_mtime": "2026-10-24T21:05:32+08:00",
+  "units_seen": ["api", "retry"],
+  "units_confirmed": [
+    {"unit": "api", "observed": "handle_request() at line 42"},
+    {"unit": "retry", "observed": "backoff capped at 30 s"}
+  ],
   "findings": [
-    {"page": 9, "element": "2.4", "severity": "high",
-     "severity_basis": "structural gap reviewers will challenge",
-     "issue": "table still present", "evidence": "five-column table visible",
-     "fix": "convert to prose", "origin": "independent"}
+    {"id": "F01", "location": "src/api.py:55", "target": "handle_request",
+     "severity": "high", "severity_basis": "unhandled 500 kills the retry loop",
+     "issue": "no timeout around the upstream call", "evidence": "line 55 awaits fetch() bare",
+     "fix": "wrap in asyncio.wait_for(timeout=...)", "origin": "independent"}
   ],
   "challenges": [],
   "confidence": "high",
-  "limitations": ["lower half of page 10 not rendered"]
+  "limitations": ["did not exercise the branch with an expired token"]
 }
 ```
 
 Rules:
 
-- Every finding needs `page / element / severity / severity_basis / issue / evidence / fix / origin`.
-  **Missing `severity_basis` is invalid, not "medium"** — the old fallback silently accepted
-  non-conforming results; `validate_result.py` now fails them.
-- `origin`: `independent` if the reviewer found it on its own; `advisory-derived` if the
-  reviewed text came from this same model's earlier draft. The latter means the chapter was
-  **not independently reviewed**, whatever the score says.
+- Every finding needs `location / target / severity / severity_basis / issue / evidence / fix / origin`.
+  **Missing `severity_basis` is invalid, not "medium"**.
+- `origin`: `independent` if the reviewer found it; `advisory-derived` if the reviewed code or
+  text came from this same model's earlier draft — that unit is **not independently reviewed**.
 - `challenges` re-opens a closed item and requires new evidence; without evidence it is dropped.
-- Declare `pages_seen`, `title_confirmed`, `limitations`. Every page in `page_map` must appear
-  in `title_confirmed` and `pages_seen`; omission fails validation.
+- Declare `units_seen`, `units_confirmed`, `limitations`. Every envelope unit must appear in
+  both lists; omission fails validation.
 - Echo `artifact_mtime`; a mismatch is a wrong version — discard the round.
 - Machine contract: `assets/result.schema.json`. Check every result before adopting it:
 
 ```bash
-python scripts/validate_result.py --result _work/review/result_v6.json \
-    --envelope _work/review/env_v6.yaml
+python scripts/validate_result.py --result _work/review/result_r3.json \
+    --envelope _work/review/env_r3.yaml
 ```
 
 `run_gpt.py --schema ... --result-path ...` runs the same check and exits `3` on failure, so a
@@ -95,26 +119,27 @@ non-conforming result never becomes "the review passed".
 ## Versions, timestamps, and what was actually read
 
 1. Every artifact has `artifact_hash` + `artifact_mtime`; both are recorded with the review.
-2. Rebuild → regenerate `page_map`; never reuse old page numbers.
-3. Reviewer confirms "the title I see on page X is …"; mismatch aborts the review.
-4. **Bind findings to claims**, not to a hash: excerpt + page + title.
+2. Rebuild → regenerate the units; never reuse stale locators (old line numbers, moved files).
+3. Reviewer confirms what it sees at a unit ("handle_request at line 42"); mismatch aborts the round.
+4. **Bind findings to claims**, not to a hash: location + excerpt + target.
 5. Echoed mtime ≠ envelope → wrong version; re-send, never adopt.
-6. **Derived text**: the reviewer often reads a `*.dump.txt`, not the artifact. Generate the
-   dump immediately after the rebuild, never reuse an older one, and record
-   `sha256(8)` + mtime in the round log (`build_envelope.py --text-dump` does it via
+6. **Derived inputs**: reviewers often read a diff, dump, export or render, not the artifact
+   itself. Generate it immediately before the call, never reuse an older one, and record
+   `sha256(8)` + mtime in the round log (`build_envelope.py --review-input` does it via
    `scripts/session.py note`). Until that is recorded, the delivery note may not claim
    "version bound".
 
 ## Provenance (advisory drafts are production)
 
 Rule 2 in SKILL.md covers drafts, not just finished artifacts. If GPT produced an outline, a
-route, a background section or any advisory text that the lead adopted, that text is
+design, a scaffold, a patch or any advisory text that the lead adopted, that work is
 **advisory-derived**:
 
-- the brief lists, per section, where the text came from (lead / adopted from model X round N);
-- findings on those sections are marked `origin: advisory-derived` and do not count as
+- the facts pack / brief lists, per unit, where the content came from (lead / adopted from
+  model X round N);
+- findings on those units are marked `origin: advisory-derived` and do not count as
   independent review;
-- those sections are reviewed by another model, or by the same model only with an explicit
+- those units are reviewed by another model, or by the same model only with an explicit
   "not independent" declaration in the delivery note;
 - if only one model is usable, delivery says "本轮评审非独立（同源）" — an independent gate
   over your own draft is not a gate.
@@ -128,10 +153,10 @@ generate the next envelope from that ledger.
 Ledger format (parsed by `build_envelope.py`):
 
 ```markdown
-| id | round | page | status | reason | owner | budget_change |
+| id | round | where | status | reason | owner | budget_change |
 |---|---|---|---|---|---|---|
-| F09 | 1 | 12 | rejected | 已有（二）3，不单独成章 | lead | |
-| F07 | 3 | 12 | duplicate-of:F09 | 与 F09 同一处 | lead | pages 30→32 |
+| F09 | 1 | docs/arch.md#4.2 | rejected | covered by 2.3 | lead | |
+| F07 | 3 | docs/arch.md#4.2 | duplicate-of:F09 | same gap | lead | pages 30→32 |
 ```
 
 Closed statuses (`rejected`, `duplicate-of:*`, `accepted`) become `prior_findings`; `open`
@@ -139,7 +164,7 @@ rows do not. Never equate "the reviewer says so" with "the problem exists".
 
 ## Scheduling
 
-- Serial or ≤2 concurrent reviews; split long jobs by page/section; batch images into one call.
+- Serial or ≤2 concurrent reviews; split long jobs by unit; batch related units into one call.
 - Every review call goes through `scripts/run_gpt.py` (persistent, recorded) — see
   [calling-gpt.md](calling-gpt.md).
 - One runner call = one batch; the runner appends its own quota-ledger row.

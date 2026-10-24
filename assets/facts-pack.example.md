@@ -2,45 +2,46 @@
 
 Frozen: YYYY-MM-DD HH:MM. One file, shared by every model.
 
-## Goal and audience
+## Goal, audience, deliverable
 
 - Goal:
-- Audience:
-- Deliverable format (docx / pptx / pdf) and where it lives:
+- Audience / consumer:
+- What "done" means in one sentence:
+- Where it lives (path, branch, environment):
 
 ## constraints — violation means rework
 
-- Template / required sections:
-- Banned words:
-- Banned numbers / claims:
-- Citation rule (every figure sourced? which style?):
-- Mandatory content:
-- House style limits (font floor, line spacing, numbering):
+- Interface / API / schema contract that must not change:
+- Required behaviour (testable statements):
+- Security / privacy rules:
+- Banned dependencies, words, numbers or APIs:
+- Style / lint rules that are enforced (formatter, linter, naming):
+- Mandatory content or sections:
 
 ## budgets — overrun is `notice`, never a veto
 
 | budget | value | changed | reason |
 |---|---|---|---|
-| pages | 30 | 2026-10-24: 30 → 32 | 图 3 需整页，避免跨页 |
-| word count | 12 000 | | |
+| size (lines / files / pages / PR) | 600 lines | 2026-10-24: 600 → 750 | retry path needed its own module |
+| performance envelope | p95 < 200 ms | | |
 | GPT calls | 6 | | |
 | deadline | YYYY-MM-DD | | |
 
 Rule: budgets move only **before** production, with the change recorded here and in the
 review ledger's `budget_change` column. "After seeing the draft" is not a reason.
 
-## Data, definitions, assets
+## Data, definitions, fixtures
 
-- Key figures and their sources:
+- Key figures / constants and their sources:
 - Definitions that must not drift:
-- Asset paths (renders, images, fonts):
+- Fixtures, assets, generated inputs (paths):
 
-## Text provenance (required when any model produced advisory drafts)
+## Provenance (required when any model produced advisory work)
 
-| section | source |
+| unit | source |
 |---|---|
-| 1.2 | lead |
-| 2.1 | advisory draft — GPT, round 2, adopted |
+| `src/retry.py` | lead |
+| `docs/arch.md#2.1` | advisory draft — GPT, round 2, adopted |
 
-Sections with an advisory source are reviewed as `origin: advisory-derived`; they are not
+Units with an advisory source are reviewed as `origin: advisory-derived`; they are not
 independently reviewed unless another model reviews them.
