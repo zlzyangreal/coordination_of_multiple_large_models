@@ -3,7 +3,7 @@
 用于 **2 个及以上大模型协作** 的调度与对接：谁负责、怎么交接、评审结论怎么判断可信、出错怎么退。只管协作机制，不管写作、排版、设计本身。
 
 - 仓库：<https://github.com/zlzyangreal/coordination_of_multiple_large_models>
-- 版本：1.3.1（2026-10-24）
+- 版本：1.4.0（2026-10-24）
 - 上一代：`多模型协作Spec.md` v2.4.1，已冻结，仅作留档
 
 ## 安装
@@ -40,21 +40,25 @@ git push
 ```
 coordination_of_multiple_large_models/
 ├── README.md            本文件（给人看）
-├── SKILL.md             入口：何时用、11 条硬规则、6 步流程（英文，给 Agent 读）
+├── SKILL.md             入口：何时用、12 条硬规则、6 步流程（英文，给 Agent 读）
 ├── references/
 │   ├── environment.md           环境检查、工具链、网络三查/Clash、权限
 │   ├── model-registry.md        模型登记与验活、路由、额度分档摘要
 │   ├── quota-routing.md         5h/7d 额度读取、分档、节奏、保底、成本校准
+│   ├── calling-gpt.md           调用入口、持久化、可观测性、.ps1 编码、中断收尾
 │   ├── execution-and-gates.md   任务契约、任务板、事实包、8 步流程、DoD、回归
 │   ├── handoff-protocol.md      请求信封、结果 schema、版本/mtime、复核门
 │   └── failure-and-artifacts.md 失败矩阵、快照与恢复、清理、上报
 ├── scripts/
-│   ├── check_env.py             一键环境自检（codex 路径/版本、进程、代理、可写、额度）
-│   ├── quota.py                 读 5h/7d 剩余额度 → 档位 S/A/B/C/R → 分工与调用方式
+│   ├── check_env.py             一键环境自检（codex 路径/版本、进程、代理、可写、实时额度）
+│   ├── run_gpt.py               唯一调用入口：默认持久化、留 thread_id/rollout、记前后额度
+│   ├── quota.py                 实时额度（app-server）→ 档位 S/A/B/C/R/U → 分工与调用方式
+│   ├── reap_turns.py            收尾卡在 inProgress 的回合（先备份、只改该状态）
 │   └── build_envelope.py        生成请求信封（SHA256/mtime/page_map），校验三路径分离
 └── assets/
     ├── envelope.example.yaml    信封示例
-    └── result.schema.json        评审结果的结构约束
+    ├── result.schema.json        评审结果的结构约束
+    └── call.schema.json          调用记录的结构约束
 ```
 
 ## 额度自适应（v1.3.0 起）
@@ -64,11 +68,14 @@ GPT 的额度是**按 5 小时窗口发、到期作废**的。旧版把 GPT 固�
 开工先读额度，分工跟着档位走：
 
 ```bash
-python scripts/quota.py            # 读档位、分工、调用方式
-python scripts/quota.py --json     # 给脚本/Agent 用
+python scripts/quota.py                # 实时值（app-server），失败自动回退会话日志
+python scripts/quota.py --source log   # 只看历史样本（不启动 app-server）
+python scripts/quota.py --json         # 给脚本/Agent 用
 python scripts/quota.py --remaining 62 --minutes 210   # 读不到时手动给
 python scripts/quota.py --note "交稿前"                  # 往 _work/quota_ledger.md 记一行
 ```
+
+实时值走 `codex app-server` 的 `account/rateLimits/read`，约 2.5 秒，能看到**所有客户端**的消耗；历史样本只在"仍属于当前窗口"时有效，窗口一旦过期就报 `U`（unknown）而不是 100%。
 
 | 档 | 5h 剩余 | 谁生产 | GPT 做什么 | 调用 |
 |---|---|---|---|---|
@@ -94,13 +101,29 @@ python scripts/quota.py --note "交稿前"                  # 往 _work/quota_le
 
 代价：`codex exec` 每次调用有固定开销（实测一次上下文很小的 `ok` 调用也要 1–3% 的窗口额度），所以 B/C 档必须批量（多页、多文件合并成一次调用），S 档才按件拆分换质量。
 
+## 调用入口与可观测性（v1.4.0）
+
+2026-10-24 的缺陷反馈单暴露了一条链路矛盾：**探针的写法被抄成了生产写法**。`codex exec --ephemeral` 不写 rollout、不留会话，于是额度脚本永远只读得到旧样本；旧样本窗口过期后又按 5 小时外推成 100%，上层据此判 S 档放量——而同一分钟实时值已经是已用 11%。下游 4 个调用脚本全部沿用 `--ephemeral`，其中 2 个写死了已失效的 `bin/<hash>/codex.exe`，1 个 `.ps1` 无 BOM 直接语法错。
+
+修法三件事：
+
+1. **额度读实时源。** `codex app-server` 的 `account/rateLimits/read`（约 2.5 秒）优先，会话日志只作兜底；**过期样本一律 `U`（unknown）**，脚本再也不会把旧样本外推成 100%。`U` 档按 R 档规划，先拿到读数再批量。
+2. **所有生产/评审调用走 `scripts/run_gpt.py`。** 默认持久化（不传 `--ephemeral`），运行时解析 codex 路径，显式传 model + effort，超时自动收尾，并把每次调用写成 `_work/calls/<request_id>.json`：`thread_id`、`rollout_path`、模型/强度/沙箱、起止时间、token 用量、调用前后额度与差值。`--probe` 才是 ephemeral，只用于连通性。
+3. **卡住的回合要收尾。** 被强杀/超时的回合会在 `thread_history` 里永远 `inProgress`，桌面端一直显示"正在处理"。runner 超时后会把该回合标成 `interrupted`；历史遗留用 `python scripts/reap_turns.py --older-than 30`（先 dry-run，`--apply` 前自动备份，只改 `inProgress` 行）。
+
+两条硬约束：
+
+- 生成的 `.ps1` 必须是 **UTF-8 with BOM**（或纯 ASCII），否则 PowerShell 5.1 把中文按 ANSI 解析，报的却是无关的 `{` 语法错；能用 `.py` 就别生成 `.ps1`。
+- 不经过 `codex exec` 的调用（直连 API、别的编排层）本来就不产生 rollout，不在额度读取范围内——报告里要写明这条边界，别当成"监控坏了"。
+
 ## 怎么用
 
-1. 开工前：`python scripts/check_env.py --short-call`（确认出口真的能通，顺带打一行额度）。
+1. 开工前：`python scripts/check_env.py --short-call`（确认出口真的能通，顺带打一行实时额度）。
 2. 分工前：`python scripts/quota.py`，照它给的档位决定"谁生产、GPT 做什么、怎么拆调用"。
-3. 交评审前：`python scripts/build_envelope.py --artifact <文件> --pages 4,8 --out <yaml>`，填好每页标题再发。
-4. 收结论后：逐条回源验证，采纳/拒绝写进 `review_ledger.md`，别把“评审说有问题”当“问题存在”。
-5. 结束：回报额度用量（5h/周）、调用统计、偏差、未闭环项；临时文件清掉，快照每文件最多留 3 份。
+3. 调用时：`python scripts/run_gpt.py --prompt-file <提示词> --cd <工作目录> --request-id <编号>`，产物落 `_work/calls/<编号>.json`。
+4. 交评审前：`python scripts/build_envelope.py --artifact <文件> --pages 4,8 --out <yaml>`，填好每页标题再发。
+5. 收结论后：逐条回源验证，采纳/拒绝写进 `review_ledger.md`，别把“评审说有问题”当“问题存在”。
+6. 结束：回报额度用量（5h/周）、调用统计、偏差、未闭环项；临时文件清掉，快照每文件最多留 3 份。
 
 ## 维护约定
 
@@ -113,6 +136,7 @@ python scripts/quota.py --note "交稿前"                  # 往 _work/quota_le
 
 | 版本 | 日期 | 变更 |
 |---|---|---|
+| 1.4.0 | 2026-10-24 | 修反馈单 BUG-1~6：额度改实时源（app-server `account/rateLimits/read`），过期样本报 `U` 不再伪造成 100%；新增 `scripts/run_gpt.py` 统一调用入口（默认持久化、运行时解析 codex、前后额度、调用记录）与 `scripts/reap_turns.py`（收尾 `inProgress`）；新增 `references/calling-gpt.md` 与 `assets/call.schema.json`；补 `.ps1` BOM 与 `bin/<hash>` 约束 |
 | 1.3.1 | 2026-10-24 | 思考强度不再随档位升降：固定按配置值（`medium`）跑，只有 R 档单次门可降一档并记录；额度杠杆改为"谁生产 / 几遍 / 几次调用 / 范围"，`quota.py` 打印配置强度 |
 | 1.3.0 | 2026-10-24 | 额度自适应：新增 `scripts/quota.py`（读 Codex 5h/7d 剩余额度）与 `references/quota-routing.md`（S/A/B/C/R 分档、节奏与周额度否决、12% 视觉门保底、增值清单、单价校准）；GPT 从"固定评审员"改为随额度生产；check_env 与失败矩阵同步 |
 | 1.2.0 | 2026-10-23 | 全面英文化、入口压到约 1k tokens；references 合并为 5 个；经验教训固化为规则；删除 CHANGELOG，版本记录并入 README；加入 GitHub 仓库与同步说明 |

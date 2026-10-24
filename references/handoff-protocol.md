@@ -65,7 +65,17 @@ Never equate "the reviewer says so" with "the problem exists". Reviewers never a
 ## Scheduling
 
 - Serial or ≤2 concurrent reviews; split long jobs by page/section; batch images into one call.
+- Every review call goes through `scripts/run_gpt.py` (persistent, recorded) — see
+  [calling-gpt.md](calling-gpt.md). A hand-written `codex exec` leaves no rollout.
 - Connection errors: triage first (environment.md), then keep the job alive 10–20 min.
 - Checkpoint each batch; resume from `review_ledger.md`.
-- Log every call: purpose, inputs, output path, duration, whether adopted.
-- Budget per artifact, 80% stop line.
+- Log every call: purpose, inputs, output path, duration, whether adopted, **and the
+  `request_id` / `thread_id` from the call record**.
+- Budget per artifact; re-read quota after each batch (quota-routing.md).
+
+## Call evidence
+
+Each round references `_work/calls/<request_id>.json`: it ties the envelope to a session,
+a rollout path, the model/effort used and the quota delta. A finding whose call record is
+missing is treated as unreviewed, not as reviewed. When a call was made outside the runner,
+state that in the ledger instead of inventing a session id.

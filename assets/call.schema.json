@@ -1,0 +1,94 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Codex call record",
+  "description": "Written by scripts/run_gpt.py to _work/calls/<request_id>.json. Proves a call happened, ties it to a session, and accounts for its quota cost.",
+  "type": "object",
+  "additionalProperties": true,
+  "required": [
+    "request_id", "status", "started_at", "finished_at", "duration_s",
+    "cwd", "model", "effort", "sandbox", "ephemeral",
+    "thread_id", "rollout_path", "events_path",
+    "quota_before", "quota_after"
+  ],
+  "properties": {
+    "request_id": {"type": "string"},
+    "status": {"enum": ["ok", "failed", "timeout", "incomplete"]},
+    "ephemeral": {
+      "type": "boolean",
+      "description": "true only for --probe; an ephemeral production call is a defect"
+    },
+    "started_at": {"type": "string", "format": "date-time"},
+    "finished_at": {"type": "string", "format": "date-time"},
+    "duration_s": {"type": "number"},
+    "cwd": {"type": "string"},
+    "model": {"type": "string"},
+    "effort": {"type": "string"},
+    "sandbox": {"enum": ["read-only", "workspace-write", "danger-full-access"]},
+    "codex": {
+      "type": "object",
+      "properties": {
+        "path": {"type": "string"},
+        "version": {"type": ["string", "null"]}
+      }
+    },
+    "thread_id": {
+      "type": ["string", "null"],
+      "description": "Codex conversation id; null only if the process died before emitting thread.started"
+    },
+    "rollout_path": {
+      "type": ["string", "null"],
+      "description": "Session file under ~/.codex/sessions; null for an ephemeral call"
+    },
+    "events_path": {"type": "string"},
+    "output_path": {"type": ["string", "null"]},
+    "exit_code": {"type": ["integer", "null"]},
+    "usage": {
+      "type": ["object", "null"],
+      "properties": {
+        "input_tokens": {"type": "integer"},
+        "cached_input_tokens": {"type": "integer"},
+        "output_tokens": {"type": "integer"},
+        "reasoning_output_tokens": {"type": "integer"}
+      }
+    },
+    "final_message": {"type": ["string", "null"]},
+    "quota_before": {"$ref": "#/definitions/quota"},
+    "quota_after": {"$ref": "#/definitions/quota"},
+    "quota_delta_pts": {
+      "type": ["number", "null"],
+      "description": "used_percent after minus before; null when either side is unknown"
+    },
+    "turn_cleanup": {
+      "type": ["object", "null"],
+      "description": "Present when a failed/timeout turn was closed as interrupted",
+      "properties": {
+        "thread_id": {"type": "string"},
+        "reaped": {"type": "boolean"},
+        "rows": {"type": "integer"},
+        "backup": {"type": ["string", "null"]},
+        "turns": {"type": "array", "items": {"type": "string"}},
+        "reason": {"type": "string"},
+        "error": {"type": "string"}
+      }
+    },
+    "stderr_tail": {"type": "array", "items": {"type": "string"}}
+  },
+  "definitions": {
+    "quota": {
+      "type": "object",
+      "required": ["source"],
+      "properties": {
+        "source": {"enum": ["app-server", "session-log", "manual", "unavailable", "error"]},
+        "used": {"type": ["number", "null"]},
+        "remaining": {"type": ["number", "null"]},
+        "hours_left": {"type": ["number", "null"]},
+        "weekly_used": {"type": ["number", "null"]},
+        "weekly_remaining": {"type": ["number", "null"]},
+        "reset_local": {"type": ["string", "null"]},
+        "plan_type": {"type": ["string", "null"]},
+        "stale": {"type": "boolean"},
+        "tier": {"enum": ["S", "A", "B", "C", "R", "U"]}
+      }
+    }
+  }
+}

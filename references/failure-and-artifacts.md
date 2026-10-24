@@ -5,7 +5,10 @@
 | Situation | Verdict | Action |
 |---|---|---|
 | Reconnects / timeouts | triage first | environment.md; report if triage fails; keep alive 10–20 min if it passes |
-| Timeout, no new logs | failed | switch model or self-produce; record real cause |
+| Timeout, no new logs | failed | runner kills and closes the turn; switch model or self-produce; record real cause |
+| Turn stuck `inProgress` | hygiene | `scripts/reap_turns.py --older-than 30` (dry-run) then `--apply`; backup is automatic |
+| Production call run with `--ephemeral` | defect | no rollout, no history, quota reader blind: rerun through `scripts/run_gpt.py`; note it in the postmortem |
+| Quota reading unknown (tier U) | constrained | never assume a surplus; take a live reading or `--remaining`; keep GPT work to gates meanwhile |
 | Quota exhausted / tier R | constrained | lead takes all text work; one visual gate only; defer the rest to the next window and report the reset time |
 | Window closed with >50% unused and a backlog | defect | wasted capacity: log used% and the reason, change the next window's plan (quota-routing.md) |
 | Approval rejected | unavailable | substitute or self-produce; never re-request the same model |

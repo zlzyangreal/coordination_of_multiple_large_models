@@ -1,6 +1,10 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
-"""Pre-flight environment check: Codex path/version, processes, proxy, egress, writability.
+"""Pre-flight environment check: Codex path/version, processes, live quota, proxy, egress,
+writability.
+
+The `--short-call` probe is `--ephemeral` on purpose (connectivity only, no history).
+Production and review calls go through `scripts/run_gpt.py`.
 
 Usage:
     python scripts/check_env.py [--workdir .] [--host chatgpt.com] [--short-call]
@@ -97,20 +101,19 @@ def main():
     try:
         sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
         from quota import classify, collect, fmt_hours  # noqa: E402
-        q = collect()
+        q = collect("auto")
+        tier, _, _ = classify(q["remaining"], q["hours_left"], q["weekly_remaining"])
         if q["remaining"] is None:
-            print("[WARN] quota: no rate-limit sample yet; "
-                  "run scripts/quota.py --remaining <pct> --minutes <m>")
+            print(f"[WARN] quota: unknown ({q.get('stale_reason') or 'no reading'}); "
+                  f"tier {tier[0]} - no quota claims until a reading exists")
         else:
-            tier, _, _ = classify(q["remaining"], q["hours_left"],
-                                  q["weekly_remaining"])
-            print(f"[OK] quota: 5h {q['remaining']:.0f}% left "
-                  f"(resets in {fmt_hours(q['hours_left'])}), "
-                  f"weekly {q['weekly_remaining']:.0f}% left -> tier {tier[0]} "
-                  f"({tier[2]})")
-            if q["stale"] or q["assumed_fresh"]:
-                print("     quota sample is not from this window; "
-                      "confirm with scripts/quota.py before a large batch")
+            weekly = "unknown" if q["weekly_remaining"] is None \
+                else f"{q['weekly_remaining']:.0f}% left"
+            print(f"[OK] quota({q['source']}): 5h {q['remaining']:.0f}% left "
+                  f"(resets in {fmt_hours(q['hours_left'])}), weekly {weekly} "
+                  f"-> tier {tier[0]} ({tier[2]})")
+            if q["stale"]:
+                print(f"     {q['stale_reason']}; treat the number as an upper bound")
     except Exception as exc:  # noqa: BLE001
         print(f"[WARN] quota: unreadable ({exc})")
 
@@ -133,6 +136,8 @@ def main():
 
     if args.short_call and codex:
         try:
+            # Probe only: --ephemeral is correct here (no rollout, no history row).
+            # Production calls must go through scripts/run_gpt.py, which persists.
             r = subprocess.run([codex, "exec", "--ephemeral", "--skip-git-repo-check",
                                 "-s", "read-only", "-c", "approval_policy=never",
                                 "-C", workdir, "ok"],
@@ -154,6 +159,9 @@ def main():
     print("\nverdict:", "ready" if not blockers else f"blocked: {', '.join(blockers)}")
     if not args.short_call:
         print("hint: add --short-call to confirm egress with a real call.")
+    else:
+        print("note: this probe is --ephemeral by design; "
+              "production calls use scripts/run_gpt.py.")
     return 1 if blockers else 0
 
 

@@ -19,20 +19,29 @@ Both are read from the CLI, not guessed.
 ## Read (gate)
 
 ```bash
-python scripts/quota.py                        # verdict + tier + allocation
-python scripts/quota.py --json                 # machine-readable
-python scripts/quota.py --remaining 62 --minutes 210   # manual, no fresh sample
-python scripts/quota.py --note "before draft"  # append a row to _work/quota_ledger.md
+python scripts/quota.py                         # live app-server, log fallback
+python scripts/quota.py --source log            # history only, no app-server
+python scripts/quota.py --json                  # machine-readable
+python scripts/quota.py --remaining 62 --minutes 210   # manual, no reading
+python scripts/quota.py --note "before draft"   # append a row to _work/quota_ledger.md
 ```
 
-- Source: newest `rate_limits` record in `%USERPROFILE%\.codex\sessions\**\rollout-*.jsonl`;
-  `check_env.py` prints the same one-liner.
-- Window already reset since the last sample → script assumes 100% and says so. If the user
-  may have worked in the Codex app meanwhile, ask for `/status` and pass `--remaining`.
-- Sample older than 30 min inside the same window → `STALE`; treat the number as a floor.
+- **Live first**: `codex app-server` + JSON-RPC `account/rateLimits/read` (~2.5 s) is the
+  authoritative value. It sees consumption from every client, including calls that wrote no
+  rollout, so it stays correct even when work runs elsewhere.
+- **Log fallback** (`--source log`, or live unavailable): the newest `rate_limits` record in
+  `%USERPROFILE%\.codex\sessions\**\rollout-*.jsonl`. It is valid **only while that record
+  belongs to the current window**.
+- **An expired sample is unknown, never 100%.** When the sample's `resets_at` is in the past,
+  the script returns `remaining=null`, tier `U`, exit code `2`. Do not extrapolate a fresh
+  window from an old sample: that is how an earlier version claimed 100% while the account
+  was at 89% used.
+- Sample older than 30 min inside the same window → `STALE`; the number is an upper bound on
+  remaining, not a measurement.
 - `limit_id: codex` only. ChatGPT-app message quota is a different counter; never mix them.
 - Re-read **after every GPT batch** and after every failure. Plan the next batch only on a
   reading you took since the last call.
+- `check_env.py` prints the same one-liner, so the environment gate already carries quota.
 
 ## Tiers
 
@@ -43,6 +52,10 @@ python scripts/quota.py --note "before draft"  # append a row to _work/quota_led
 | **B** conserve | 30–50% | all production | gates only, no exploratory passes | batch artifacts and pages |
 | **C** vision-only | 12–30% | all text / code / format | vision and layout judgement only | batch all images into one call |
 | **R** reserve | <12% | everything | at most the single delivery visual gate | one call, then stop |
+
+**U - unknown** is not a band: no usable reading exists (expired sample, app-server down,
+never called). Plan as **R** and take a reading before any batch. A script that would
+otherwise report "surplus" must report `U` instead; pretending is worse than not knowing.
 
 ## Effort stays put
 

@@ -7,19 +7,24 @@
 | Process | target client running (Codex / ChatGPT) | name + PID |
 | CLI | absolute path + version | `codex --version` |
 | Models | slugs, reasoning levels, quota | see model-registry.md |
-| Quota | 5 h remaining %, reset time, weekly | `python scripts/quota.py` |
+| Quota | 5 h remaining %, reset time, weekly | `python scripts/quota.py` (live app-server) |
+| Runner | production call path present and working | `scripts/run_gpt.py` |
 | Toolchain | python, node, Word/LibreOffice, renderer | absolute paths |
 | Network | egress, proxy vars, Clash/TUN | triage below |
 | Permissions | sandbox mode, target writable, file locks | read-only / workspace-write / full |
 | Skills | available skills/plugins | names |
 
-Run once: `python scripts/check_env.py [--short-call]`.
+Run once: `python scripts/check_env.py [--short-call]`. The `--short-call` probe is
+`--ephemeral` **by design** (connectivity only, no history). Production and review calls go
+through `scripts/run_gpt.py`, which persists; see [calling-gpt.md](calling-gpt.md).
 
 ## Toolchain
 
 - Never hardcode `bin/<hash>/codex.exe`; app updates move it. Resolve the newest `%LOCALAPPDATA%\OpenAI\Codex\bin\*\codex.exe` at runtime.
 - On ENOENT, re-resolve — do not retry the stale path.
 - Use absolute runtime paths for python/node; never rely on PATH.
+- A generated `.ps1` must be UTF-8 **with BOM** (or pure ASCII), or PowerShell 5.1 will
+  misparse Chinese text and report a misleading syntax error. Prefer `.py`.
 
 ## Network and proxy (triage before waiting)
 
