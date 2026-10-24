@@ -19,19 +19,30 @@ Columns: task | producer | reviewer | output | DoD | depends on | status.
 
 ## Facts pack
 
-One file shared by all models: goal, audience, hard constraints, banned words/numbers, data definitions, asset paths, output format, DoD.
+One file shared by all models, in **two separate blocks** — never mix them, or a budget will
+be litigated as a constraint:
 
-Freeze before parallel production; if a fact changes, update the pack first, then the artifact.
+| Block | Contents | Reviewer weight |
+|---|---|---|
+| **constraints** | template/section structure, banned words and numbers, citation rules, mandatory content | violation → high/medium, rework |
+| **budgets** | page/word limits, number of calls, deadlines, effort — each with a default value and a change log | overrun → `notice`, never a veto |
+
+- `constraints` are frozen. `budgets` are adjustable, but only before production and only with
+  a recorded change (ledger `budget_change` row), never "after seeing the draft".
+- Reviewer rule: a budget overrun is `severity: notice`; a constraint violation is
+  `high`/`medium`. "The draft is 32 pages against a 30-page budget" is not a finding that
+  blocks delivery.
+- Template: `assets/facts-pack.example.md`.
 
 ## Execution (8 steps with gates)
 
 | # | Action | Gate |
 |---|---|---|
-| 0 | Back up originals, record SHA256 | no edit without backup |
+| 0 | Pin the contract (`session.py pin`), back up originals, record SHA256 | no pin, no start; no edit without backup |
 | 1 | Capability + quota check | no routing before check |
 | 2 | Decompose, board, contract | no board, no start |
-| 3 | Facts pack | no parallel work before freeze |
-| 4 | Produce + independent review | producer never self-reviews |
+| 3 | Facts pack (constraints vs budgets) | no parallel work before freeze |
+| 4 | Produce + independent review (schema-enforced) | producer never self-reviews; advisory drafts count as production |
 | 5 | Integrate (doc/ppt/chart) | single owner per file |
 | 6 | Cross-model acceptance: visual + compliance + facts | open items block delivery |
 | 7 | Deliver + postmortem | no postmortem, not done |
@@ -57,15 +68,17 @@ Freeze before parallel production; if a fact changes, update the pack first, the
 - **Content**: every requirement and finding addressed; banned words/numbers zero; key figures sourced or marked "pending"; counts match; no "already completed" phrasing in a proposal.
 - **Visual**: no overflow, clipping, edge collision, overlap, misalignment; minimum font size; no stretched/cropped images; continuous page numbering; visual review by a non-producer model.
 - **Document**: header row repeats across pages; figure/table numbering continuous; no heading orphaned at page bottom; consistent font/spacing/indent; no blank or half-empty pages.
-- **Delivery**: source + PDF + backup + note; version and date in filename; originals untouched; postmortem updated.
+- **Review integrity**: every adopted finding has a schema-valid result and a call record; any `advisory-derived` chapter is declared non-independent; no finding was adopted without source verification.
+- **Delivery**: source + PDF + backup + note; version and date in filename; originals untouched; postmortem updated. The note states `SKILL vX (pinned …), repository vY` and whether any gate was skipped.
+- **Postmortem**: the fixed question "was the skill in force the whole session? where did it break?" is answered; any deviation is written down, not remembered.
 - **Regression** (after any edit): rerun the same scripted checks (banned words, citation numbering, page count, table count); diff against the previous build; layout passes ≤3.
 - **Full-text extraction**: assert on paragraphs + all table cells + headers/footers + text boxes. Paragraph-only checks miss table content.
 
 ## Role separation
 
-- **Producer**: edits, builds, integrates; never signs off.
-- **Reviewer**: findings only; never edits production files; never both advises and accepts.
-- **Scripts**: banned words, counts, hashes — deterministic, no model memory.
+- **Producer**: edits, builds, integrates; never signs off. Advisory drafts (outlines, routes, background text that the lead adopts) count as production for the sections they shape.
+- **Reviewer**: findings only; never edits production files; never both advises and accepts; never reviews its own draft as if independent.
+- **Scripts**: banned words, counts, hashes, schema validation — deterministic, no model memory.
 - **Lead**: arbitrates, accepts, owns delivery.
 
-Every critical artifact passes two gates: **model review + scripted compliance**.
+Every critical artifact passes three gates: **model review + scripted compliance + schema/source verification**.

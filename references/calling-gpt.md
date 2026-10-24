@@ -26,13 +26,42 @@ python scripts/run_gpt.py --prompt-file prompt.txt --cd _work --request-id R2026
 | Persistent by default | no `--ephemeral`; `--probe` is the only way to get one, for connectivity only |
 | Runtime path | newest `%LOCALAPPDATA%\OpenAI\Codex\bin\*\codex.exe`; a `bin/<hash>/` literal is a defect |
 | Explicit model + effort | `-m <model>` and `-c model_reasoning_effort=<effort>` always passed, defaulting to `~/.codex/config.toml` |
-| Three paths | `--output` is the payload; the artifact and the result path stay distinct |
+| Review calls carry a schema | `--schema assets/result.schema.json`; free-text production calls must **not** pass one |
+| Strict derivation | the runner converts the contract to codex strict mode (`additionalProperties: false`, all-required); `--schema-raw` bypasses it |
+| Result capture | `--output` (payload) then `--result-path`; the runner copies and validates, the reviewer writes nothing |
+| Three paths | `--output` / `--result-path` / artifact stay distinct |
 | Timeout | default 1200 s; on expiry the process is killed and the turn is closed as `interrupted` |
 | Record | `_work/calls/<request_id>.json` + `.events.jsonl` |
-| Exit | 0 ok, 1 failure, 2 bad invocation, 124 timeout |
+| Ledger | one quota row appended per call; `--no-ledger` skips it |
+| Exit | 0 ok, 1 failure, 2 bad invocation, 3 schema-invalid, 124 timeout |
 
 Long prompts (>6000 chars) are fed on stdin to stay under the Windows command-line
 limit; short prompts are passed as an argument. Both produce the same record.
+
+## Review call (the only shape that passes a read-only gate)
+
+```bash
+python scripts/run_gpt.py --prompt-file _work/review/brief_v6.md --cd _work --request-id R6 \
+    --sandbox read-only \
+    --schema assets/result.schema.json \
+    --envelope _work/review/env_v6.yaml \
+    --output _work/review/payload_v6.json \
+    --result-path _work/review/result_v6.json
+```
+
+- The brief ends with "return the JSON as your final message, write no files". Write access is
+  neither needed nor granted; `read-only + direct` is rejected by `build_envelope.py`.
+- `--schema` makes codex emit schema-shaped output; the runner then validates the captured
+  payload (echoed `artifact_mtime`, `title_confirmed` coverage, required findings fields) and
+  exits `3` instead of letting a non-conforming result become "the review passed".
+- **Strict-mode gotcha**: codex forwards `--output-schema` to the API with `strict: true`,
+  which rejects plain draft-07 (every object needs `additionalProperties: false`, every
+  property must be `required`, `pattern`/`minLength` are unsupported). The runner therefore
+  derives `<request_id>.codex-schema.json` with `schema_for_codex.py` and passes that; your
+  hand-written contract stays the validation schema. `--schema-raw` skips the derivation and
+  will fail unless the file is already strict.
+- `--envelope` turns on the cross-check against `request_id`, `version_hash` and `artifact_mtime`.
+- A failed validation is a failed gate: repair and re-run, never hand the payload to the ledger.
 
 ## Call record (observability contract)
 
@@ -40,14 +69,16 @@ Every call leaves this, and the postmortem quotes it instead of "it ran":
 
 | Field | Meaning |
 |---|---|
-| `request_id`, `status` | identity and `ok / failed / timeout / incomplete` |
+| `request_id`, `status` | identity and `ok / failed / timeout / incomplete / schema-invalid` |
 | `started_at`, `finished_at`, `duration_s` | wall clock |
 | `model`, `effort`, `sandbox`, `ephemeral` | what actually ran |
+| `contract` | pinned skill version, current version, `drift` flag |
 | `thread_id`, `rollout_path`, `events_path` | where to look, and whether it persisted |
 | `exit_code`, `usage` | process result and token usage |
-| `quota_before`, `quota_after`, `quota_delta_pts` | budget accounting |
+| `schema_path`, `schema_valid`, `schema_errors` | whether the result met the contract |
+| `quota_before`, `quota_after`, `quota_delta_pts`, `quota_ledger` | budget accounting |
 | `turn_cleanup` | `reaped: true` and the backup path when a killed turn was closed |
-| `final_message`, `output_path` | what came back, and where the payload landed |
+| `final_message`, `output_path`, `result_path` | what came back, and where it landed |
 
 Machine contract: `assets/call.schema.json`.
 

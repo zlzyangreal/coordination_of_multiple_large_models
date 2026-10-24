@@ -15,12 +15,15 @@ Why a runner:
 Usage:
     python scripts/run_gpt.py --prompt-file prompt.txt --cd work --request-id R01
     python scripts/run_gpt.py --prompt "reply ok" --probe          # connectivity only
-    python scripts/run_gpt.py --prompt-file p.txt --sandbox workspace-write --timeout 900
+    python scripts/run_gpt.py --prompt-file brief.md --sandbox read-only \
+        --schema assets/result.schema.json --output _work/payload.json \
+        --result-path _work/result.json --envelope _work/env.yaml  # review call
 
-Exit codes: 0 ok, 1 model/tool failure, 2 bad invocation, 124 timeout.
+Exit codes: 0 ok, 1 model/tool failure, 2 bad invocation, 3 schema-invalid, 124 timeout.
 
 Record: `_work/calls/<request_id>.json` (+ `.events.jsonl`). Payload stays in `output`
-(`-o`) and the result in `result_path` - three distinct paths, never the artifact.
+(`-o`), the result is copied to `result_path`, and both stay distinct from the artifact.
+One quota-ledger row is appended per call; `--no-ledger` skips it.
 """
 import argparse
 import glob
@@ -28,6 +31,7 @@ import json
 import os
 import random
 import re
+import shutil
 import string
 import subprocess
 import sys
@@ -48,7 +52,7 @@ try:
 except Exception:  # noqa: BLE001
     reap_turns = None
 
-SKILL_VERSION = "1.4.0"
+SKILL_VERSION = "1.5.0"
 CALL_DIR = os.path.join("_work", "calls")
 
 
@@ -198,6 +202,35 @@ def close_turn(thread_id, started_ts, backup_dir, attempts=6, delay=1.5):
             "reason": f"no inProgress row after {attempts * delay:.0f}s"}
 
 
+def contract_info():
+    """Which contract this call runs under, and whether the repo moved on."""
+    skill = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                         "..", "SKILL.md"))
+    current, current_mtime = None, None
+    try:
+        with open(skill, encoding="utf-8") as fh:
+            text = fh.read()
+        m = re.search(r"^\s*version:\s*(\S+)\s*$", text, re.M)
+        current = m.group(1) if m else None
+        current_mtime = datetime.fromtimestamp(os.path.getmtime(skill)).astimezone() \
+            .isoformat(timespec="seconds")
+    except OSError:
+        pass
+    pinned = None
+    try:
+        with open(os.path.join("_work", "skill_pin.json"), encoding="utf-8") as fh:
+            pinned = json.load(fh)
+    except (OSError, ValueError):
+        pass
+    return {
+        "current": current,
+        "current_mtime": current_mtime,
+        "pinned": pinned.get("version") if pinned else None,
+        "pinned_at": pinned.get("pinned_at") if pinned else None,
+        "drift": bool(pinned and current and pinned.get("version") != current),
+    }
+
+
 def main():
     ap = argparse.ArgumentParser(description="single entry point for Codex calls")
     src = ap.add_mutually_exclusive_group(required=True)
@@ -212,11 +245,18 @@ def main():
     ap.add_argument("--sandbox", default="read-only",
                     choices=("read-only", "workspace-write", "danger-full-access"))
     ap.add_argument("--output", help="payload path (-o); never the artifact")
-    ap.add_argument("--schema", help="JSON schema for the final message")
+    ap.add_argument("--result-path", help="copy the captured payload here on success")
+    ap.add_argument("--schema", help="JSON schema; required for review calls (see calling-gpt.md)")
+    ap.add_argument("--schema-raw", action="store_true",
+                    help="pass --schema to codex verbatim (it must already be strict; usually wrong)")
+    ap.add_argument("--envelope", help="envelope yaml; enables the echo/coverage cross-check")
     ap.add_argument("--timeout", type=int, default=1200, help="seconds (default 1200)")
     ap.add_argument("--probe", action="store_true",
                     help="ephemeral connectivity test only; never for production")
     ap.add_argument("--calls-dir", default=CALL_DIR)
+    ap.add_argument("--ledger", default=os.path.join("_work", "quota_ledger.md"),
+                    help="one row is appended per call (use --no-ledger to skip)")
+    ap.add_argument("--no-ledger", action="store_true")
     args = ap.parse_args()
 
     codex = resolve_codex()
@@ -243,14 +283,37 @@ def main():
     if args.output:
         args.output = os.path.abspath(args.output)
         os.makedirs(os.path.dirname(args.output) or ".", exist_ok=True)
+    if args.result_path:
+        if not args.output:
+            print("[FAIL] --result-path needs --output (the payload the runner captures)",
+                  file=sys.stderr)
+            return 2
+        args.result_path = os.path.abspath(args.result_path)
+        os.makedirs(os.path.dirname(args.result_path) or ".", exist_ok=True)
 
     cmd = [codex, "exec", "--json", "--skip-git-repo-check", "-C", cwd,
            "-m", model, "-c", f"model_reasoning_effort={effort}",
            "-s", args.sandbox]
     if args.output:
         cmd += ["-o", args.output]
+    codex_schema = None
     if args.schema:
-        cmd += ["--output-schema", os.path.abspath(args.schema)]
+        # codex forwards --output-schema to the Responses API with strict=true; plain
+        # draft-07 is rejected (additionalProperties / all-required). Derive a strict copy.
+        codex_schema = os.path.abspath(args.schema)
+        if not args.schema_raw:
+            try:
+                from schema_for_codex import derive
+                with open(args.schema, encoding="utf-8") as fh:
+                    codex_schema = os.path.abspath(
+                        os.path.join(args.calls_dir, f"{request_id}.codex-schema.json"))
+                    os.makedirs(os.path.dirname(codex_schema), exist_ok=True)
+                    with open(codex_schema, "w", encoding="utf-8") as out:
+                        json.dump(derive(json.load(fh)), out, ensure_ascii=False, indent=2)
+            except Exception as exc:  # noqa: BLE001
+                print(f"[FAIL] cannot derive strict schema: {exc}", file=sys.stderr)
+                return 2
+        cmd += ["--output-schema", codex_schema]
     if args.probe:
         cmd += ["--ephemeral"]
     feed_prompt = len(prompt) > 6000
@@ -282,9 +345,40 @@ def main():
     if status in ("timeout", "failed", "incomplete") and not args.probe:
         cleanup = close_turn(thread_id, started, os.path.dirname(os.path.abspath(record_path)))
 
+    # Result capture + contract check (BUG-1 / BUG-3): the reviewer writes nothing,
+    # the runner copies the captured payload and validates it before the lead adopts it.
+    schema_valid, schema_errors = None, []
+    if args.schema and status == "ok":
+        captured = args.output
+        if not captured or not os.path.isfile(captured):
+            schema_valid, schema_errors = False, ["no payload captured; pass --output"]
+        else:
+            if args.result_path:
+                shutil.copyfile(captured, args.result_path)
+                captured = args.result_path
+            try:
+                from validate_result import validate_files
+                _, schema_errors, _ = validate_files(captured, args.schema, args.envelope)
+                schema_valid = not schema_errors
+            except Exception as exc:  # noqa: BLE001
+                schema_valid, schema_errors = False, [f"validator error: {exc}"]
+        if not schema_valid:
+            status = "schema-invalid"
+
     delta = None
     if isinstance(before.get("used"), (int, float)) and isinstance(after.get("used"), (int, float)):
         delta = round(after["used"] - before["used"], 1)
+
+    contract = contract_info()
+    ledger_path = None
+    if not args.no_ledger and quota_mod:
+        try:
+            delta_text = f"{delta:+.1f}pt" if delta is not None else "delta ?"
+            note = f"{request_id} {status} {before.get('used')}->{after.get('used')}% {delta_text}"
+            ledger_path = quota_mod.append_ledger(
+                args.ledger, dict(after, now=finished_iso), note, after.get("tier"))
+        except Exception as exc:  # noqa: BLE001
+            print(f"[WARN] ledger append failed: {exc}", file=sys.stderr)
 
     record = {
         "request_id": request_id,
@@ -298,16 +392,23 @@ def main():
         "effort": effort,
         "sandbox": args.sandbox,
         "codex": {"path": codex, "version": codex_version(codex)},
+        "contract": contract,
         "thread_id": thread_id,
         "rollout_path": find_rollout(thread_id),
         "events_path": os.path.abspath(events_path),
         "output_path": args.output,
+        "result_path": args.result_path,
+        "schema_path": os.path.abspath(args.schema) if args.schema else None,
+        "codex_schema_path": codex_schema,
+        "schema_valid": schema_valid,
+        "schema_errors": schema_errors[:20],
         "exit_code": info.get("exit_code"),
         "usage": info.get("usage"),
         "final_message": info.get("final_message"),
         "quota_before": before,
         "quota_after": after,
         "quota_delta_pts": delta,
+        "quota_ledger": ledger_path,
         "turn_cleanup": cleanup,
         "stderr_tail": info.get("stderr_tail")[-3:],
     }
@@ -317,8 +418,16 @@ def main():
     print(f"[run] {status} in {record['duration_s']}s, thread {thread_id}, "
           f"quota {before.get('used')}->{after.get('used')}% ({delta}), record {record_path}",
           file=sys.stderr)
+    if contract["drift"]:
+        print(f"[WARN] contract drift: repo is v{contract['current']}, session pinned "
+              f"v{contract['pinned']}; this call used the pinned contract - record the deviation",
+              file=sys.stderr)
     if status == "timeout":
         return 124
+    if status == "schema-invalid":
+        print(f"[FAIL] result failed schema validation ({len(schema_errors)} problem(s)); "
+              f"see {record_path}", file=sys.stderr)
+        return 3
     return 0 if status == "ok" else 1
 
 

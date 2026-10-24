@@ -16,6 +16,12 @@
 | Artifact overwritten | incident | restore from snapshot or call log; postmortem entry |
 | Write conflict | incident | owner's version wins; merge with diff; record rollback point |
 | Reviewer vs producer conflict | technical | lead decides, records reasons |
+| Result fails schema validation | blocked | not adopted; `run_gpt.py` exits 3; re-run with `--schema`, or repair and re-validate |
+| Reviewer was asked to write `result_path` | defect | zero-write rule: capture via runner `-o`; the round is void under a read-only sandbox |
+| Advisory draft reviewed by its author | defect | findings marked `origin: advisory-derived`; delivery declares non-independent; add a second reviewer |
+| Contract changed mid-session | governance | keep executing the pinned version; log the deviation; delivery states "pinned vX, repo vY" |
+| Skill dropped mid-session | defect | status line missing → declare it immediately, re-read, redo the skipped gate; postmortem question |
+| Budget treated as a constraint | process | expect a reviewer will litigate it; budget overrun is `notice`, fix the facts pack split |
 | Unusable model output | quality | fix facts pack / narrow scope / change model; never ship as-is |
 
 ## Artifact safety

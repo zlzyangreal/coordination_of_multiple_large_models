@@ -39,8 +39,12 @@ python scripts/quota.py --note "before draft"   # append a row to _work/quota_le
 - Sample older than 30 min inside the same window → `STALE`; the number is an upper bound on
   remaining, not a measurement.
 - `limit_id: codex` only. ChatGPT-app message quota is a different counter; never mix them.
-- Re-read **after every GPT batch** and after every failure. Plan the next batch only on a
-  reading you took since the last call.
+- **When to read**: on every user message (one live read at the top of the turn), before each
+  new batch, and after any failure. A reading older than the turn it is used in is not a reading.
+- **A batch = one `run_gpt.py` call.** The runner appends its own row to
+  `_work/quota_ledger.md` (tier, 5 h left, weekly left, before→after, delta), so a manual
+  `--note` is only for readings taken outside the runner.
+- If live fails, fall back to the log, then to `U`. Never invent a number to keep the flow.
 - `check_env.py` prints the same one-liner, so the environment gate already carries quota.
 
 ## Tiers
@@ -140,6 +144,8 @@ backlog is.
 
 - **Utilization**: `used%` at reset. Target **70–90%** when a backlog existed; above 92% is
   reckless (no room for the gate), below 50% with a backlog is wasted capacity.
+- Per message: the status line (`session.py status`) carries the current 5 h and weekly
+  readings, so the number is auditable at any point, not reconstructed at the end.
 - Final report line: `quota: 5h 20→78%, weekly 12→19%, tier S→B→C, 6 calls, 0 wasted`.
 - Wasted windows and the reason (no backlog, user idle, proxy down) belong in the
   postmortem, not hidden.

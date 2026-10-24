@@ -400,6 +400,25 @@ def collect(source="auto", manual_remaining=None, manual_minutes=None):
     return logged or data
 
 
+def append_ledger(path, data, note, tier=None):
+    """Append one row to the quota ledger; shared by the CLI and run_gpt.py."""
+    path = os.path.abspath(path)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    new = not os.path.exists(path)
+    left5 = "unknown" if data.get("remaining") is None else f"{data['remaining']:.0f}%"
+    left7 = "unknown" if data.get("weekly_remaining") is None \
+        else f"{data['weekly_remaining']:.0f}%"
+    code = tier or data.get("tier") or "U"
+    with open(path, "a", encoding="utf-8") as fh:
+        if new:
+            fh.write("# quota ledger\n\n"
+                     "| time | tier | 5h left | weekly left | resets in | note |\n"
+                     "|---|---|---|---|---|---|\n")
+        fh.write(f"| {str(data.get('now', ''))[:16].replace('T', ' ')} | {code} | {left5} | "
+                 f"{left7} | {fmt_hours(data.get('hours_left'))} | {note} |\n")
+    return path
+
+
 def main():
     ap = argparse.ArgumentParser(description="Codex quota -> routing tier")
     ap.add_argument("--json", action="store_true")
@@ -478,19 +497,8 @@ def main():
         print(json.dumps(data, ensure_ascii=False, indent=2))
 
     if args.note:
-        path = os.path.abspath(args.ledger)
-        os.makedirs(os.path.dirname(path), exist_ok=True)
-        new = not os.path.exists(path)
-        with open(path, "a", encoding="utf-8") as fh:
-            if new:
-                fh.write("# quota ledger\n\n"
-                         "| time | tier | 5h left | weekly left | resets in | note |\n"
-                         "|---|---|---|---|---|---|\n")
-            left5 = "unknown" if data["remaining"] is None else f"{data['remaining']:.0f}%"
-            left7 = "unknown" if data["weekly_remaining"] is None \
-                else f"{data['weekly_remaining']:.0f}%"
-            fh.write(f"| {data['now'][:16].replace('T', ' ')} | {tier[0]} | {left5} | "
-                     f"{left7} | {fmt_hours(data['hours_left'])} | {args.note} |\n")
+        path = append_ledger(args.ledger, data, args.note, tier[0])
+        print(f"note       : {args.note} -> {path}")
     if unknown:
         return 2
     return 0

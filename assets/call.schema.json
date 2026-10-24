@@ -12,7 +12,7 @@
   ],
   "properties": {
     "request_id": {"type": "string"},
-    "status": {"enum": ["ok", "failed", "timeout", "incomplete"]},
+    "status": {"enum": ["ok", "failed", "timeout", "incomplete", "schema-invalid"]},
     "ephemeral": {
       "type": "boolean",
       "description": "true only for --probe; an ephemeral production call is a defect"
@@ -41,6 +41,25 @@
     },
     "events_path": {"type": "string"},
     "output_path": {"type": ["string", "null"]},
+    "result_path": {"type": ["string", "null"]},
+    "schema_path": {"type": ["string", "null"]},
+    "codex_schema_path": {
+      "type": ["string", "null"],
+      "description": "Strict derivative actually passed to codex --output-schema"
+    },
+    "schema_valid": {"type": ["boolean", "null"]},
+    "schema_errors": {"type": "array", "items": {"type": "string"}},
+    "contract": {
+      "type": "object",
+      "description": "Which contract this call ran under (session pin vs repository)",
+      "properties": {
+        "pinned": {"type": ["string", "null"]},
+        "pinned_at": {"type": ["string", "null"]},
+        "current": {"type": ["string", "null"]},
+        "current_mtime": {"type": ["string", "null"]},
+        "drift": {"type": "boolean"}
+      }
+    },
     "exit_code": {"type": ["integer", "null"]},
     "usage": {
       "type": ["object", "null"],
@@ -57,6 +76,10 @@
     "quota_delta_pts": {
       "type": ["number", "null"],
       "description": "used_percent after minus before; null when either side is unknown"
+    },
+    "quota_ledger": {
+      "type": ["string", "null"],
+      "description": "Path of the ledger row appended for this call; null when --no-ledger"
     },
     "turn_cleanup": {
       "type": ["object", "null"],

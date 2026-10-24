@@ -1,13 +1,21 @@
 # 请求信封示例：把产物交给评审模型前填写
-request_id: R20261023-07
-artifact: F:\deepseek_workspace\parper_writing\fist_output\report_v5.docx
-version_hash: 2DC2AE9F710E0485D1F87AAAD66C73BB598A4B77E3637D0F18A2E4DDC8A59138
-artifact_mtime: 2026-10-23T23:05:32+08:00
+# 由 build_envelope.py 生成；下面只是字段示意
+request_id: R20261024-07
+skill_version: 1.5.0
+skill_pinned_at: 2026-10-24T19:36:03+08:00
 
-# 权限与路径：三者互不相同
-write_permission: read-only
-output_path: _work/review/payload_v5.md
-result_path: _work/review/result_v5.json
+artifact: F:\deepseek_workspace\parper_writing\fist_output\report_v6.docx
+version_hash: 2DC2AE9F710E0485D1F87AAAD66C73BB598A4B77E3637D0F18A2E4DDC8A59138
+artifact_mtime: 2026-10-24T20:41:12+08:00
+
+# 评审零写盘：只读访问 + runner 捕获最终消息
+artifact_access: read-only
+result_capture: runner
+output_path: _work/review/payload_v6.json
+result_path: _work/review/result_v6.json
+
+# 必须是 JSON Schema 的绝对路径，不能是 "findings[]"
+output_schema: F:\deepseek_workspace\coordination_of_multiple_large_models\assets\result.schema.json
 
 # 分页产物必须给 page_map；图片按页码命名
 page_map:
@@ -26,6 +34,17 @@ acceptance:
   - "（一）1 无 1.1/1.2 小标题"
   - "2.4 结尾给出三处缺口，且与（二）三项内容对应"
   - "表1 整表在同一页"
-output_schema: findings[]
+
+# 由 review_ledger.md 生成，必填；第一轮为 []
+prior_findings:
+  - id: F09
+    page: 12
+    status: rejected
+    reason: "已有（二）3，不单独成章"
+  - id: F07
+    page: 12
+    status: "duplicate-of:F09"
+    reason: "与 F09 同一处"
+
 priority: normal
-deadline: 2026-10-24T12:00:00+08:00
+deadline: 2026-10-24T23:30:00+08:00
