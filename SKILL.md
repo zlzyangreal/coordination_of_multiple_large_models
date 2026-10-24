@@ -2,7 +2,7 @@
 name: coordination_of_multiple_large_models
 description: Orchestrate two or more LLMs on one deliverable — capability check, model verification, quota-tiered routing, task contract, request/result envelopes, review gate, failure handling. Use for multi-model routing, GPT/Codex reviews, subagent handoffs, adopting review findings, model outages or proxy issues, and collaboration postmortems. 触发词：多模型协作、模型分工、模型路由、额度分档、GPT 额度利用率、GPT 评审、codex 评审、子代理协作、评审结论采纳、模型卡顿、codex 超时、代理问题、协作复盘。
 metadata:
-  version: 1.3.0
+  version: 1.3.1
   updated: 2026-10-24
 allowed-tools: Read, Write, Edit, Bash
 ---
@@ -25,7 +25,7 @@ Skip for single-model, single-file, one-shot work — but still run `scripts/che
 1. **One lead** owns the deliverable; other models are roles, not co-commanders.
 2. **Production ≠ review.** A producer never signs off its own artifact.
 3. **No envelope, no review.** Findings without a request envelope are ignored.
-4. **Model = slug + reasoning.** Never bake effort into the slug (`x-medium` is wrong). Always pass `-m` and `model_reasoning_effort` explicitly.
+4. **Model = slug + reasoning.** Never bake effort into the slug (`x-medium` is wrong). Always pass `-m` and `model_reasoning_effort` explicitly, at the configured level. Effort is **not** a quota lever: the tier changes scope and calls, not effort.
 5. **Three paths differ:** artifact, payload/`output_path`, `result_path`. `-o` never targets the artifact.
 6. **Version is hash + mtime.** Reviewer must echo `artifact_mtime`; a mismatch means wrong version, discard the round.
 7. **Network before waiting.** TCP/proxy/short-call triage; report to the user instead of idling 20 minutes.
@@ -50,7 +50,7 @@ Skip for single-model, single-file, one-shot work — but still run `scripts/che
 | Command | Purpose |
 |---|---|
 | `python scripts/check_env.py --short-call` | Resolve Codex, version, processes, proxy, reachability, writability, quota |
-| `python scripts/quota.py [--json] [--remaining 62 --minutes 210] [--note "…"]` | Read 5 h / weekly remaining, tier S/A/B/C/R, who produces, effort |
+| `python scripts/quota.py [--json] [--remaining 62 --minutes 210] [--note "…"]` | Read 5 h / weekly remaining, tier S/A/B/C/R, who produces, call shape |
 | `python scripts/build_envelope.py --artifact <f> --pages 4,8 --out <yaml>` | SHA256 + mtime + page_map skeleton; enforces path separation |
 | `assets/result.schema.json` | Result contract |
 | `assets/envelope.example.yaml` | Envelope example |

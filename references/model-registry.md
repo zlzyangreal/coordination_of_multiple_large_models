@@ -34,13 +34,16 @@ Unregistered or unverified = unusable. A failed model is never reported as a "fa
 
 GPT's share is not fixed. Read the pool, then allocate:
 
-| Tier | Lead | GPT | Effort |
+| Tier | Lead | GPT | Calls |
 |---|---|---|---|
-| S / A | deterministic parts, integration | production + gates (S also gets a second pass) | medium…xhigh |
-| B | all production | gates only, batched | low/medium |
-| C | all text work | vision only | low |
-| R | everything | one visual gate, then stop | low |
+| S / A | deterministic parts, integration | production + gates (S also gets a second pass) | one per artifact / group |
+| B | all production | gates only, batched | batch pages and artifacts |
+| C | all text work | vision only | batch all images |
+| R | everything | one visual gate, then stop | one call |
 
+- `model_reasoning_effort` stays at the configured level (`medium`); tiers change who produces
+  and how many calls, not effort. Only tier R may drop one notch for a single gate, recorded in
+  the ledger.
 - Read before routing and re-read after every batch: `python scripts/quota.py`; bands,
   burn/pace/weekly overrides, reserve and worked examples live in [quota-routing.md](quota-routing.md).
 - Review > generation > polish when the pool is tight; at S the order flips — produce first,

@@ -36,16 +36,30 @@ python scripts/quota.py --note "before draft"  # append a row to _work/quota_led
 
 ## Tiers
 
-| Tier | 5 h remaining | Lead | GPT | Reasoning effort | Calls |
-|---|---|---|---|---|---|
-| **S** surplus | ≥65% | integrate, scripted checks, arbitrate, deliver | production + all gates + optional second pass | `high` / `xhigh` | one per artifact |
-| **A** normal | 50–65% | deterministic parts | quality-sensitive production + every gate | `medium` / `high` | one per artifact group |
-| **B** conserve | 30–50% | all production | gates only, no exploratory passes | `low` / `medium` | batch artifacts and pages |
-| **C** vision-only | 12–30% | all text / code / format | vision and layout judgement only | `low` | batch all images into one call |
-| **R** reserve | <12% | everything | at most the single delivery visual gate | `low` | one call, then stop |
+| Tier | 5 h remaining | Lead | GPT | Calls |
+|---|---|---|---|---|
+| **S** surplus | ≥65% | integrate, scripted checks, arbitrate, deliver | production + all gates + optional second pass | one per artifact |
+| **A** normal | 50–65% | deterministic parts | quality-sensitive production + every gate | one per artifact group |
+| **B** conserve | 30–50% | all production | gates only, no exploratory passes | batch artifacts and pages |
+| **C** vision-only | 12–30% | all text / code / format | vision and layout judgement only | batch all images into one call |
+| **R** reserve | <12% | everything | at most the single delivery visual gate | one call, then stop |
 
-Effort is the throttle: `low→xhigh` moves cost roughly 2–4× for the same task. Always pass
-`-m` and `model_reasoning_effort` explicitly (SKILL.md rule 4).
+## Effort stays put
+
+`-m` and `model_reasoning_effort` are always passed explicitly (SKILL.md rule 4), but the level does
+**not** move with the tier. It stays at the configured value (`~/.codex/config.toml`, currently
+`medium`; the script prints it). Two reasons:
+
+- Lowering effort degrades judgement exactly when the artifact matters most — the conserve tiers
+  are where a bad review costs the most.
+- Raising effort is a poor way to burn surplus: two normal passes over different scopes beat one
+  `xhigh` pass, and a changed level makes reviews incomparable between rounds.
+
+One exception, written in the ledger: tier **R** with a gate that cannot wait → drop **one** notch
+for that call only, then restore. Any other change needs the user's explicit request.
+
+The quota levers, in order of effect: **who produces** (lead vs GPT) → **number of passes** →
+**number of calls** (batching) → **scope** (pages/artifacts). Effort is not on the list.
 
 ## Adjustments, applied in this order
 
@@ -93,6 +107,8 @@ backlog is.
   (16 k tokens of system/repo context). At B/C, batch; at S, split for quality.
 - Cached re-reads barely count; fresh input + output + reasoning do. Long sessions replaying
   a large context are cheaper than they look in raw token totals.
+- Effort does multiply cost (`low`→`xhigh` is roughly 2–4×), which is exactly why it is left at
+  one setting: it is a quality knob, not a budget knob.
 - Images are priced per image: batch every page into one call at C, and never send a page
   twice.
 - Keep `_work/quota_ledger.md` (the `--note` rows). Three logged batches give per-job prices,
@@ -125,4 +141,4 @@ backlog is.
 | 28% left, 90 min | C | Lead produces; one batched vision+layout pass at the end; text review deferred |
 | 44% left, 40 min | S (burn) | Run the queued adversarial pass now; it expires with the window |
 | 14% left, 3 h | C | Vision only; schedule text work after the reset at the printed time |
-| 62% left but weekly 20% | B (weekly) | Weekly cap wins; batch, effort low |
+| 62% left but weekly 20% | B (weekly) | Weekly cap wins; batch, no extra passes |

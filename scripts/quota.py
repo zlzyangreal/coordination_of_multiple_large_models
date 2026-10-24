@@ -27,6 +27,7 @@ import argparse
 import glob
 import json
 import os
+import re
 import sys
 from datetime import datetime, timedelta, timezone
 
@@ -50,39 +51,48 @@ PLAN = {
     "S": {
         "lead": "integrate, run deterministic checks, arbitrate, deliver",
         "gpt": "production + all gates + optional second pass",
-        "effort": "high / xhigh",
         "batch": "one call per artifact (quality over amortization)",
         "next": "queue production work now - this quota expires at reset",
     },
     "A": {
         "lead": "produce deterministic parts; GPT-facing handoffs stay clean",
         "gpt": "quality-sensitive production + every gate",
-        "effort": "medium / high",
         "batch": "one call per artifact group",
         "next": "keep gates intact; no speculative passes",
     },
     "B": {
         "lead": "all production, integration, scripted checks",
         "gpt": "gates only, batched; no exploratory passes",
-        "effort": "low / medium",
         "batch": "batch artifacts and pages; one call per group",
         "next": "reserve >=8% for the delivery visual gate",
     },
     "C": {
         "lead": "all text / code / format work",
         "gpt": "vision and layout judgement only, batched",
-        "effort": "low",
         "batch": "batch every image into one call",
         "next": "defer text review until after reset",
     },
     "R": {
         "lead": "everything",
         "gpt": "at most the single delivery visual gate, if not yet run",
-        "effort": "low",
         "batch": "one call, then stop",
         "next": "do not start GPT-dependent work; report remaining budget",
     },
 }
+
+
+def configured_effort(path=None):
+    """Configured model_reasoning_effort; the tier policy never changes it."""
+    path = path or os.path.join(os.path.expanduser("~"), ".codex", "config.toml")
+    try:
+        with open(path, encoding="utf-8") as fh:
+            for line in fh:
+                m = re.match(r'\s*model_reasoning_effort\s*=\s*"([^"]+)"', line)
+                if m:
+                    return m.group(1)
+    except OSError:
+        pass
+    return None
 
 
 def local(ts):
@@ -267,6 +277,10 @@ def main():
     tier, pace, cap = classify(data["remaining"], data["hours_left"], data["weekly_remaining"])
     week_capped = cap is not None and data["weekly_remaining"] is not None and \
         data["weekly_remaining"] < 25
+    effort = configured_effort()
+    effort_note = "held; tiers change scope and calls, not effort"
+    if tier[0] == "R":
+        effort_note = "one notch down only if a gate must still run below 8%, and record it"
     data.update({
         "tier": tier[0],
         "tier_label": tier[2],
@@ -274,6 +288,9 @@ def main():
         "pace": round(pace, 1) if pace else None,
         "weekly_capped": week_capped,
         "plan": PLAN[tier[0]],
+        "effort_configured": effort,
+        "effort_changed": False,
+        "effort_note": effort_note,
     })
 
     if args.json:
@@ -300,8 +317,9 @@ def main():
               + ("  [capped by weekly quota]" if d["weekly_capped"] else ""))
         print(f"lead       : {d['plan']['lead']}")
         print(f"gpt        : {d['plan']['gpt']}")
-        print(f"effort     : {d['plan']['effort']}")
         print(f"batching   : {d['plan']['batch']}")
+        label = d["effort_configured"] or "as configured"
+        print(f"effort     : {label} - {d['effort_note']}")
         print(f"next       : {d['plan']['next']}")
         if d["stale"] or d["assumed_fresh"]:
             print("warning    : confirm in Codex /status before a large batch")
