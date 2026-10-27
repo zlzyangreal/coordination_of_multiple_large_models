@@ -107,14 +107,29 @@ def ensure_project(project="."):
 
 # --------------------------------------------------------------------------- json io
 def read_json(path):
-    """Read JSON, returning (value, error). Missing file is (None, None)."""
-    try:
-        with open(path, encoding="utf-8-sig") as fh:
-            return json.load(fh), None
-    except FileNotFoundError:
-        return None, None
-    except (OSError, ValueError) as exc:
-        return None, f"{path}: {exc}"
+    """Read JSON, returning (value, error). Missing file is (None, None).
+
+    A concurrent writer replaces the file atomically, but on Windows a reader
+    can still lose the race against `os.replace` with a transient PermissionError.
+    Retry those briefly instead of reporting a corrupt state file.
+    """
+    for attempt in range(6):
+        try:
+            with open(path, encoding="utf-8-sig") as fh:
+                return json.load(fh), None
+        except FileNotFoundError:
+            return None, None
+        except PermissionError:
+            if attempt == 5:
+                return None, f"{path}: permission denied while another process writes"
+            time.sleep(0.03)
+        except OSError as exc:
+            if attempt == 5:
+                return None, f"{path}: {exc}"
+            time.sleep(0.03)
+        except ValueError as exc:
+            return None, f"{path}: {exc}"
+    return None, f"{path}: could not be read"
 
 
 def atomic_write(path, text, mode=0o600):
@@ -131,10 +146,23 @@ def atomic_write(path, text, mode=0o600):
     try:
         with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as fh:
             fh.write(text)
-        os.replace(temp, path)
+        # Windows rejects os.replace while another process holds the destination
+        # open without FILE_SHARE_DELETE. Concurrent state transactions are
+        # expected, so retry briefly instead of failing the call.
+        for attempt in range(12):
+            try:
+                os.replace(temp, path)
+                break
+            except PermissionError:
+                if attempt == 11:
+                    raise
+                time.sleep(0.02 + 0.01 * attempt)
     finally:
         if os.path.exists(temp):
-            os.remove(temp)
+            try:
+                os.remove(temp)
+            except OSError:
+                pass
     try:
         os.chmod(path, mode)
     except OSError:

@@ -755,13 +755,14 @@ def extended_cases(env, project, port_a, port_b, port_c):
         "print(plan['links'][0]['id'])")
     procs = [subprocess.Popen([sys.executable, "-c", rotation_script, project],
                               cwd=SKILL, env=env, stdout=subprocess.PIPE,
-                              text=True, encoding="utf-8") for _ in range(6)]
+                              stderr=subprocess.PIPE, text=True, encoding="utf-8")
+             for _ in range(6)]
     heads = []
     for proc in procs:
-        stdout, _ = proc.communicate(timeout=120)
+        stdout, stderr = proc.communicate(timeout=120)
         heads.append(stdout.strip())
         if proc.returncode != 0:
-            heads.append(f"exit:{proc.returncode}")
+            heads.append(f"exit:{proc.returncode}:{(stderr or '').strip()[-120:]}")
     check("concurrent round-robin planners rotate through both links",
           len(heads) == 6 and set(heads) == {"mock_a/mock-ok", "mock_b/claude-mock"}
           and heads.count("mock_a/mock-ok") == 3
