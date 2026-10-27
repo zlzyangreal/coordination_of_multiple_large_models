@@ -197,10 +197,22 @@ def models_url(record, override=None):
 
 
 def chat_url(record, override=None):
-    """The URL one completion is posted to, or None when it cannot be composed."""
+    """The URL one completion is posted to, or None when it cannot be composed.
+
+    ``chatUrl`` (a full endpoint) wins, then ``chatPath`` (appended to the base),
+    then the conventional path for the declared wire. The overrides exist for
+    services that expose one OpenAI-shaped endpoint rather than
+    ``<base>/chat/completions`` (Pollinations, some proxies).
+    """
     record = record or {}
-    suffix = CHAT_SUFFIX.get(record.get("format"))
+    full = _trim(record.get("chatUrl"))
+    if full:
+        return None if "{" in full and "}" in full else full
     base = base_url(record, override)
+    path = _trim(record.get("chatPath"))
+    if base and path:
+        return base + ("" if path.startswith("/") else "/") + path
+    suffix = CHAT_SUFFIX.get(record.get("format"))
     if not base or suffix is None:
         return None
     if "{" in base and "}" in base:

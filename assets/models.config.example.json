@@ -33,7 +33,13 @@
       "models": ["qoder-auto"],
       "credential": {"source": "command", "argv": ["qoder", "auth", "token"],
                      "timeoutSeconds": 30},
-      "_comment": "account login done by the vendor CLI; the skill only imports the token it mints. `argv` avoids a shell."
+      "account": {
+        "loginArgv": ["qoder", "login"],
+        "statusArgv": ["qoder", "whoami"],
+        "logoutArgv": ["qoder", "logout"],
+        "timeoutSeconds": 300
+      },
+      "_comment": "account login is delegated to the vendor CLI; the skill never sees the password and clears the stored token on logout"
     }
   },
   "lanes": {

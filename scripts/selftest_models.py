@@ -408,6 +408,14 @@ def cases(env, project, other, port_a, port_b, port_c):
     check("lane ids are not provider ids",
           registry.parse("codex:gpt-5.6-sol") is None
           and registry.is_lane_id("codex:gpt-5.6-sol"))
+    check("a full chatUrl overrides the composed completion path",
+          registry.chat_url({"format": "openai-chat",
+                             "baseUrl": "https://text.pollinations.ai",
+                             "chatUrl": "https://text.pollinations.ai/openai"})
+          == "https://text.pollinations.ai/openai")
+    check("a chatPath is appended to the base URL",
+          registry.chat_url({"format": "openai-chat", "baseUrl": "http://x:1/v1",
+                             "chatPath": "/openai"}) == "http://x:1/v1/openai")
     kind, scope, retryable, cooldown, _ = model_http.classify(400, "invalid request")
     check("an unclassified 400 is request-scoped", (kind, scope, retryable, cooldown)
           == ("invalid_request", "request", False, 0))
@@ -730,6 +738,56 @@ def extended_cases(env, project, port_a, port_b, port_c):
     check("model changes are audited",
           os.path.isfile(log_path) and "add-custom" in open(log_path,
                                                             encoding="utf-8").read())
+
+    # Round-5: rotating a credential clears the old auth cooldown, or the fixed
+    # key would stay unusable for hours.
+    run(project, ["add-custom", "rot", "--base-url", base_b, "--format",
+                  "anthropic-messages", "--auth", "apiKey", "--models", "claude-mock"], env)
+    run(project, ["key", "set", "rot", "--from-env", "LEAK_KEY"], env)
+    code_bad, _, _ = run(project, ["call", "--model", "rot/claude-mock",
+                                   "--prompt", "hi"], env)
+    run(project, ["key", "set", "rot", "--from-env", "TEST_KEY"], env)
+    code_good, out_good, err_good = run(project, ["call", "--model", "rot/claude-mock",
+                                                  "--prompt", "hi", "--json"], env)
+    check("rotating a credential clears the auth cooldown",
+          code_bad != 0 and code_good == 0
+          and json.loads(out_good).get("text") == "anthropic ok", out_good + err_good)
+    # outcome and clears the stored token on logout.
+    account_cli = os.path.join(fake_dir, "fake_account.py")
+    account_log = os.path.join(fake_dir, "account.log")
+    with open(account_cli, "w", encoding="utf-8") as fh:
+        fh.write("import os,sys\n"
+                 "open(os.environ['ACCT_LOG'],'a',encoding='utf-8').write(sys.argv[1]+'\\n')\n"
+                 "if sys.argv[1]=='whoami':\n"
+                 "    print('account: demo-user'); sys.exit(0)\n"
+                 "if sys.argv[1] in ('login','logout'):\n"
+                 "    print(sys.argv[1]+' ok'); sys.exit(0)\n"
+                 "sys.exit(2)\n")
+    run(project, ["add-custom", "acct_mock", "--base-url", base_a,
+                  "--models", "mock-ok", "--auth", "none"], env)
+    _patch_config(config_path, lambda cfg: cfg["providers"]["acct_mock"].__setitem__(
+        "account", {
+            "loginArgv": [sys.executable, account_cli, "login"],
+            "logoutArgv": [sys.executable, account_cli, "logout"],
+            "statusArgv": [sys.executable, account_cli, "whoami"],
+        }))
+    env_acct = dict(env, ACCT_LOG=account_log)
+    code, out, err = run(project, ["account", "login", "acct_mock"], env_acct)
+    check("account login runs the vendor CLI and records the session",
+          code == 0 and os.path.isfile(account_log), out + err)
+    code, out, err = run(project, ["account", "status", "acct_mock"], env_acct)
+    check("account status reports the logged-in account", code == 0 and "demo-user" in out,
+          out + err)
+    code, out, err = run(project, ["account", "logout", "acct_mock"], env_acct)
+    logged = open(account_log, encoding="utf-8").read() if os.path.isfile(account_log) else ""
+    check("account logout runs the vendor CLI and records the exit",
+          code == 0 and "logout" in logged, out + err)
+    code, out, err = run(project, ["account", "login", "acct_mock"], env_acct)
+    check("account login works again after logout (re-login)", code == 0, out + err)
+    code, out, err = run(project, ["account", "list", "--json"], env_acct)
+    rows = json.loads(out) if code == 0 else []
+    check("account list shows the configured account",
+          code == 0 and any(row[0] == "acct_mock" for row in rows), out + err)
 
     # R1-CONCURRENCY: five processes, five counted calls, no lost update.
     script = ("import sys;sys.path.insert(0,'scripts');import model_config as m;"

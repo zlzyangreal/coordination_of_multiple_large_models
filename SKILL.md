@@ -70,7 +70,7 @@ SKILL v1.7.0 (pinned 19:36) | quota 5h 78% / week 96% | 阶段：评审
 | `python scripts/check_env.py --short-call` | Resolve Codex, version, processes, proxy, reachability, writability, live quota |
 | `python scripts/session.py pin\|check\|status\|note` | Contract pin/drift, status line, round notes (review-input hashes) |
 | `python scripts/run_gpt.py --prompt-file <f> --cd <dir> --request-id <id>` | **The** GPT call path: persistent, records thread/rollout/quota, `--schema` + `--result-path` for reviews |
-| `python scripts/models.py <init\|providers\|add\|key\|list\|discover\|test\|use\|route\|chains\|call\|health\|budget\|doctor>` | Per-project model access: provider catalog, 0600 credentials, availability, routing, chains, unified calls, budgets |
+| `python scripts/models.py <init\|providers\|add\|key\|account\|list\|discover\|test\|use\|route\|chains\|call\|health\|budget\|doctor>` | Per-project model access: provider catalog, 0600 credentials, vendor-mediated account login, availability, routing, chains, unified calls, budgets |
 | `python scripts/quota.py [--source {auto,live,log}] [--json] [--remaining 62 --minutes 210]` | 5 h / weekly remaining, tier S/A/B/C/R/U, who produces, call shape |
 | `python scripts/validate_result.py --result <json> [--envelope <yaml>]` | Schema + echo + unit-coverage validation; exit 1 blocks adoption |
 | `python scripts/schema_for_codex.py --schema <json> --out <f>` | Derive the strict schema codex requires (run_gpt does it automatically) |

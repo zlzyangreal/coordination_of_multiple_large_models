@@ -308,6 +308,10 @@ def cmd_add_custom(args):
     }
     if args.models_url:
         setting["modelsUrl"] = args.models_url
+    if args.chat_url:
+        setting["chatUrl"] = args.chat_url
+    if args.chat_path:
+        setting["chatPath"] = args.chat_path
     if args.api_key_env:
         setting["apiKeyEnv"] = args.api_key_env
     path = _write_provider(args, pid, setting, args.scope)
@@ -358,6 +362,22 @@ def cmd_remove(args):
 
 
 # --------------------------------------------------------------------------- keys
+def _clear_auth_cooldown(project, pid):
+    """A rotated credential invalidates the old auth/billing cooldown.
+
+    Without this, fixing a key leaves the provider unusable for hours and the
+    only advice is "wait" — the recovery path the checklist asks for.
+    """
+    def clear(state):
+        row = (state.get("providers") or {}).get(pid) or {}
+        if row.get("kind") in ("auth", "billing", "permission"):
+            row.update({"status": "unknown", "until": None, "kind": None,
+                        "reason": "credential rotated or account re-authenticated"})
+            state.setdefault("providers", {})[pid] = row
+
+    cfg_mod.mutate(project, clear)
+
+
 def cmd_key(args):
     cfg, _ = load(args)
     pid = args.provider.strip()
@@ -383,6 +403,7 @@ def cmd_key(args):
         if not acl["ok"]:
             warn(f"could not confirm that the credential file is private "
                  f"({acl['detail']}); `models.py doctor` reports the effective ACL")
+        _clear_auth_cooldown(project_of(args), pid)
         return 0
     if args.key_command == "clear":
         path = cfg_mod.set_key(pid, None, project_of(args), scope=args.scope)
@@ -405,6 +426,106 @@ def cmd_key(args):
         label = "no key"
     emit(f"{pid}: {label} (source {status['source'] or 'none'})")
     return 0
+
+
+# --------------------------------------------------------------------------- accounts
+def _account_setting(pid, cfg):
+    return (_setting(pid, cfg).get("account") or {})
+
+
+def _run_account_command(argv, timeout, capture):
+    """Run one vendor login/logout/status command without a shell.
+
+    The login itself belongs to the vendor client (browser OAuth, device code,
+    whatever it needs); this skill only launches it and records the outcome. It
+    never sees or stores the password, and a token it later needs is minted by
+    the configured `credential` command.
+    """
+    if not (isinstance(argv, list) and argv and all(isinstance(a, str) for a in argv)):
+        return None, "no argv configured (expected a list of strings)"
+    try:
+        done = subprocess.run(argv, shell=False, capture_output=capture, text=True,
+                              encoding="utf-8", errors="replace", timeout=timeout)
+    except (OSError, subprocess.SubprocessError) as exc:
+        return None, f"could not run {argv[0]}: {exc}"
+    if capture:
+        return done, None
+    return done, None
+
+
+def cmd_account(args):
+    cfg, _ = load(args)
+    project = project_of(args)
+    if args.account_command == "list":
+        rows = []
+        for pid, setting in (cfg.get("providers") or {}).items():
+            account = (setting or {}).get("account") or {}
+            if not isinstance(account, dict) or not account:
+                continue
+            state = cfg_mod.load_state(project)
+            row = (state.get("providers", {}).get(pid) or {}).get("account") or {}
+            rows.append([pid, "yes" if row.get("loggedIn") else "no",
+                         row.get("at") or "-", "configured"])
+        if _json(args):
+            emit(json.dumps(rows, ensure_ascii=False, indent=2))
+        elif rows:
+            _table(rows, ["provider", "logged in", "at", "account"])
+        else:
+            emit("no providers declare an `account` section; add loginArgv/"
+                 "logoutArgv/statusArgv to one in _work/models/config.json")
+        return 0
+
+    pid = (args.provider or "").strip()
+    record = _record(pid, cfg)
+    if record is None:
+        return fail(f"unknown provider {pid!r}", 2)
+    account = _account_setting(pid, cfg)
+    action = args.account_command
+    argv = account.get(f"{action}Argv")
+    if action == "login" and not argv:
+        return fail(f"{pid} has no account.loginArgv; account login is delegated to "
+                    f"the vendor CLI (for example [\"qoder\", \"login\"])", 2)
+    if action == "logout" and not argv:
+        return fail(f"{pid} has no account.logoutArgv", 2)
+
+    timeout = int(account.get("timeoutSeconds") or 300)
+    capture = action == "status"
+    done, error = _run_account_command(argv, timeout, capture)
+    if error:
+        return fail(f"{pid}: {error}", 2)
+    output = "" if not capture else ((done.stdout or "") + (done.stderr or "")).strip()
+    key, _, _ = cfg_mod.api_key(record, _setting(pid, cfg), project, execute=True)
+    safe = cfg_mod.redact(output, [key] if key else [])
+    ok = done.returncode == 0
+
+    def remember(state):
+        row = state.setdefault("providers", {}).setdefault(pid, {})
+        entry = row.get("account") or {}
+        entry.update({"at": cfg_mod.iso(), "status": safe[:200] or None})
+        if action == "login":
+            entry["loggedIn"] = ok
+        elif action == "logout":
+            entry["loggedIn"] = False
+        row["account"] = entry
+
+    cfg_mod.mutate(project, remember)
+    if action == "login" and ok:
+        _clear_auth_cooldown(project, pid)
+    if action == "logout" and ok:
+        for scope in ("project", "user"):
+            try:
+                cfg_mod.set_key(pid, None, project, scope=scope)
+            except OSError:
+                pass
+        emit(f"{pid}: logged out; the stored token was cleared")
+        _log_change(project, f"account logout {pid}")
+        return 0
+    if capture:
+        emit(f"{pid}: {'logged in' if ok else 'not logged in'}")
+        if safe:
+            emit(safe[:500])
+    _log_change(project, f"account {action} {pid}")
+    return 0 if ok else 1
 
 
 # --------------------------------------------------------------------------- catalog
@@ -1310,6 +1431,10 @@ def build_parser():
     p.add_argument("--format", default="openai-chat")
     p.add_argument("--models", action="append", default=[])
     p.add_argument("--models-url", dest="models_url")
+    p.add_argument("--chat-url", dest="chat_url",
+                   help="full completion endpoint (for services with no /chat/completions)")
+    p.add_argument("--chat-path", dest="chat_path",
+                   help="completion path appended to --base-url")
     p.add_argument("--name")
     p.add_argument("--auth", choices=("none", "apiKey", "token"), default="none")
     p.add_argument("--api-key-env", dest="api_key_env")
@@ -1331,6 +1456,11 @@ def build_parser():
     p.add_argument("key_command", choices=("set", "clear", "status"))
     p.add_argument("provider")
     p.add_argument("--from-env", dest="from_env")
+
+    p = add("account", cmd_account,
+            "vendor-mediated account login / status / logout (no password handled here)")
+    p.add_argument("account_command", choices=("login", "status", "logout", "list"))
+    p.add_argument("provider", nargs="?", default="")
 
     p = add("list", cmd_list, "the project's model catalog with availability")
     p.add_argument("--provider")

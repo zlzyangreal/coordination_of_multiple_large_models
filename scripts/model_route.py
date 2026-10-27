@@ -62,6 +62,8 @@ def provider_record(provider_id, cfg):
             "format": _text(setting.get("format")) or "openai-chat",
             "baseUrl": _text(setting.get("baseUrl")),
             "modelsUrl": _text(setting.get("modelsUrl")) or None,
+            "chatPath": _text(setting.get("chatPath")) or None,
+            "chatUrl": _text(setting.get("chatUrl")) or None,
             "auth": dict(setting.get("auth") or {"kind": "none"}),
             "models": [],
             "local": bool(setting.get("local")),
@@ -70,7 +72,7 @@ def provider_record(provider_id, cfg):
     else:
         return None
     if setting:
-        for key in ("format", "baseUrl", "modelsUrl", "headers"):
+        for key in ("format", "baseUrl", "modelsUrl", "headers", "chatPath", "chatUrl"):
             value = setting.get(key)
             if value not in (None, "", {}):
                 record[key] = value

@@ -90,6 +90,40 @@ Precedence for one provider (first hit wins):
   or a cloud identity flow this skill cannot run. Use the vendor client, then import
   the resulting token as a `token`/`command` credential.
 
+## Accounts: login is the vendor's job
+
+A platform that authenticates a *person* (browser OAuth, device code, QR scan) is not
+something a coordination CLI should reimplement: the password prompt, the redirect and
+the token exchange belong to the vendor client. The skill therefore supports a
+vendor-mediated account lifecycle:
+
+```json
+"account": {
+  "loginArgv":  ["qoder", "login"],
+  "statusArgv": ["qoder", "whoami"],
+  "logoutArgv": ["qoder", "logout"],
+  "timeoutSeconds": 300
+}
+```
+
+```bash
+python scripts/models.py account login  qoder_local   # launches the vendor flow
+python scripts/models.py account status qoder_local   # vendor whoami, redacted
+python scripts/models.py account logout qoder_local   # vendor logout + token cleared
+python scripts/models.py account list                 # configured accounts
+```
+
+- Commands are argv lists, never a shell; login/logout inherit the terminal so an
+  interactive prompt works, status output is captured and redacted.
+- The skill stores **no password**: it records `loggedIn`, the time and the vendor's own
+  status line in `state.json`, and clears the project/user stored token on logout.
+- A call still obtains its token through the provider's `credential` spec (typically
+  `{"source": "command", "argv": ["qoder", "auth", "token"]}`), so "login" and "call"
+  share one credential source and re-login is just `account login` again.
+- The reference project's ten browser-OAuth channels remain out of scope as *built-in*
+  channels; this is the supported way to bring one of them in without reimplementing its
+  sign-in.
+
 ## Providers and model rows
 
 `models.py providers` lists the vendored registry (76 providers: 61 API-key, 10
