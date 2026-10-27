@@ -170,6 +170,33 @@ python scripts/models.py health | budget | doctor
 > `assets/providers.registry.json`，用 `python scripts/models.py providers --search <名字>`
 > 查询。任何一家都需要先配置 Key、再 `team scan` 让你确认后才会参与调用。
 
+### Claude / Anthropic（付费，非免费）
+
+Claude 走 Anthropic 官方 API，注册表内置 `anthropic` 提供商（`anthropic-messages` 协议）；
+它不是免费成员，按量计费。模型名以 Anthropic 当前可用 id 为准，注册表内置的示例：
+
+| 模型名称（id） | 协议 | 说明 |
+|---|---|---|
+| `claude-sonnet-4-20250514` | `anthropic-messages` | Sonnet，日常生产/评审首选 |
+| `claude-opus-4-20250514` | `anthropic-messages` | Opus，更贵、推理更强 |
+| `claude-3-5-sonnet-20241022` | `anthropic-messages` | 旧版 Sonnet，兼容保留 |
+
+```powershell
+python scripts/models.py add anthropic --models claude-sonnet-4-20250514
+python scripts/models.py key set anthropic          # 或设 ANTHROPIC_API_KEY
+python scripts/models.py test anthropic --generate  # 可选：花一次很小的生成验活
+python scripts/models.py team scan
+python scripts/models.py team add anthropic/claude-sonnet-4-20250514 --allow-unverified
+```
+
+- **必须带 `--allow-unverified`**：Anthropic 没有模型列表接口，`team add` 无法用列表验证；
+  入队后第一次成功调用会把健康状态标成 `ok`。
+- Claude 属于 anthropic 家族，与 GPT/DeepSeek 不同族，可当独立评审：`python scripts/models.py use review anthropic/claude-sonnet-4-20250514`。
+- 只有 OpenRouter Key 时：`add open_router --models anthropic/claude-sonnet-4`，再 `team add open_router/anthropic/claude-sonnet-4 --allow-unverified`。
+- Claude Pro/Max 订阅（Claude Code 登录）没有内置 OAuth；需要手工把令牌通过 `credential` +
+  自定义 `headers` 导入并自行维护刷新。Bedrock/Vertex 上的 Claude 默认不在注册表内，
+  Vertex 的 ADC 认证不可驱动。
+
 离线自测（不联网、不花钱）：`python scripts/selftest_models.py`，覆盖三线协议、429 回退、
 400 不回退、凭据脱敏、模型级冷却、精确 pin、家族独立性、跨进程状态锁、受保护家族直连拦截、
 凭据命令延迟执行、codex 委托的 cwd 与空响应等 136 项。
