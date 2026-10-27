@@ -580,6 +580,14 @@ def plan_chain(name, cfg, state, project=".", read_quota=True):
         if entry is None:
             dropped.append({"id": model_id, "reason": "not in the catalog"})
             continue
+        if entry["lane"] == "dsh":
+            # A named chain is still executed by `models.py call`, which cannot be
+            # the lead session. Accepting the link and skipping it at call time
+            # would make the chain look longer than it is.
+            dropped.append({"id": model_id,
+                            "reason": "the lead session cannot be called from a script; "
+                                      "run that step in the session"})
+            continue
         if not entry.get("usable"):
             dropped.append({"id": model_id, "reason": entry.get("reason")})
             continue

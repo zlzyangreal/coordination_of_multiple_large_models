@@ -332,6 +332,18 @@ def cases(env, project, other, port_a, port_b, port_c):
     code, out, err = run(project, ["call", "--chain", "bad400", "--prompt", "hi", "--json"], env)
     check("a 400 is a request defect and does not fall over", code == 4, out + err)
 
+    # Round-5: a named chain is executed by a script, so a dsh link is dropped at
+    # plan time rather than silently skipped at call time.
+    run(project, ["chains", "set", "withdsh", "--models",
+                  "dsh:auto,mock_a/mock-ok"], env)
+    code, out, err = run(project, ["chains", "show", "withdsh", "--no-quota", "--json"], env)
+    plan = json.loads(out) if code == 0 else {}
+    check("a chain link that is the lead session is dropped with a reason",
+          code == 0
+          and [link["id"] for link in plan.get("links", [])] == ["mock_a/mock-ok"]
+          and any(row["id"] == "dsh:auto" and "lead session" in row["reason"]
+                  for row in plan.get("dropped", [])), out + err)
+
     config_path = os.path.join(project, "_work", "models", "config.json")
     config = json.load(open(config_path, encoding="utf-8"))
     config["defaults"]["retryTransient"] = 2
@@ -532,6 +544,14 @@ def extended_cases(env, project, port_a, port_b, port_c):
           and entries["agg_alias/gpt-4o"].get("protectedFamily") is True, out + err)
 
     # Round-2: call --role must not crash (the route-only flag was missing).
+    state_path = os.path.join(project, "_work", "models", "state.json")
+    state = json.load(open(state_path, encoding="utf-8"))
+    from datetime import datetime, timezone
+    state.setdefault("quota", {})["codex"] = {
+        "at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "data": {"tier": "S", "remaining": 90.0, "weekly_remaining": 90.0,
+                 "hours_left": 3.0, "source": "test"}}
+    json.dump(state, open(state_path, "w", encoding="utf-8"), ensure_ascii=False, indent=2)
     code, out, err = run(project, ["call", "--role", "produce", "--prompt", "hi",
                                    "--dry-run"], env)
     check("call --role produce reaches the planner without a traceback",
