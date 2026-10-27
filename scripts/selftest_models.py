@@ -563,6 +563,21 @@ def extended_cases(env, project, port_a, port_b, port_c):
                                    "--dry-run"], env)
     check("call --role lead refuses instead of substituting another model",
           code == 2 and "lead session" in (out + err), out + err)
+    code, out, err = run(project, ["use", "lead", "codex:auto"], env)
+    check("the lead role cannot be switched to codex", code == 2, out + err)
+    config_path = os.path.join(project, "_work", "models", "config.json")
+    _patch_config(config_path, lambda cfg: cfg.setdefault("roles", {}).setdefault(
+        "lead", {}) .__setitem__("model", "codex:auto"))
+    code, out, err = run(project, ["route", "--role", "lead", "--no-quota", "--json"], env)
+    plan = json.loads(out) if code == 0 else {}
+    check("the lead route is dsh even if the config says codex",
+          code == 0 and plan.get("primary", {}).get("id") == "dsh:auto", out + err)
+    _patch_config(config_path, lambda cfg: cfg.setdefault("lanes", {}).setdefault(
+        "dsh", {}).__setitem__("enabled", False))
+    code, out, err = run(project, ["route", "--role", "lead", "--no-quota"], env)
+    check("a disabled dsh lane fails instead of substituting a model", code == 3, out + err)
+    _patch_config(config_path, lambda cfg: cfg.setdefault("lanes", {}).setdefault(
+        "dsh", {}).__setitem__("enabled", True))
     state_path = os.path.join(project, "_work", "models", "state.json")
     state = json.load(open(state_path, encoding="utf-8"))
     from datetime import datetime, timezone
@@ -689,7 +704,7 @@ def extended_cases(env, project, port_a, port_b, port_c):
           gateway["known"] is False)
 
     # R1-PIN: an exact pin never silently becomes another model.
-    code, out, err = run(project, ["route", "--role", "lead", "--pin", "nope/nope",
+    code, out, err = run(project, ["route", "--role", "review", "--pin", "nope/nope",
                                    "--no-quota"], env)
     check("an unknown pin fails instead of substituting another model",
           code == 3 and "not in this project's catalog" in (out + err), out + err)

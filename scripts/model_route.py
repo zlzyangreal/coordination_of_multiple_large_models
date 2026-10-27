@@ -419,6 +419,28 @@ def route(cfg, state, role, needs=None, exclude_families=(), pin=None, project="
     """
     if role not in ROLE_NAMES:
         raise RouteError(f"unknown role {role!r} (known: {', '.join(ROLE_NAMES)})")
+    if role in ("lead", "mechanical"):
+        # The lead is the dsh host session, full stop. It is not a configurable
+        # role: switching it to codex/HTTP would silently move ownership of the
+        # deliverable to a different model family.
+        entries = catalog(cfg, state, project)
+        dsh = [entry for entry in entries if entry["lane"] == "dsh" and entry.get("usable")]
+        if pin and not _text(pin).startswith("dsh:"):
+            raise RouteError(f"the lead is always the dsh session; {pin!r} is not a "
+                             f"valid lead model")
+        if not dsh:
+            raise RouteError("the lead is always the dsh session, but lanes.dsh is "
+                             "disabled or empty; enable it instead of substituting a model")
+        return {
+            "role": role,
+            "needs": dict(needs or {}),
+            "primary": dsh[0],
+            "fallback": [],
+            "notes": ["the lead role is fixed to the dsh host session; it is not "
+                      "routed to another model"],
+            "excluded": [],
+            "quota": {},
+        }
     if role == "plan":
         # Planning is scored, not budgeted: reading the codex pool here would only
         # add a subprocess and a state write to a decision quota does not affect.

@@ -1215,6 +1215,10 @@ def cmd_use(args):
     if role not in model_route.ROLE_NAMES:
         return fail(f"unknown role {role!r} (known: {', '.join(model_route.ROLE_NAMES)})", 2)
     model = args.model.strip()
+    if role in ("lead", "mechanical") and model not in ("auto", "dsh:auto") and \
+            not model.startswith("dsh:"):
+        return fail(f"role {role!r} is fixed to the dsh host session; it cannot be "
+                    f"pointed at {model!r}", 2)
     if model != "auto":
         state = cfg_mod.load_state(project_of(args))
         entries = model_route.catalog(cfg, state, project_of(args))
