@@ -143,6 +143,33 @@ python scripts/models.py health | budget | doctor
   厂商 CLI，拿到 token 后用 `credential: {source: command|file}` 导入。本 skill 是客户端，
   不做转发网关。
 
+### 免费成员清单（v2.0.0）
+
+下表是**可接入的免费候选**，不是"已入队"：是否加入由你确认（`team scan` → 询问 →
+`team add`）。"免费层"通常仍要注册账号/Key，只有标注"无需"的才是真正免密。
+
+| 成员 | 注册表分类 | 凭据 | 接入要点 | 备注 |
+|---|---|---|---|---|
+| Pollinations | 公网免费（非注册表） | **无需** | `add-custom` + `--chat-url https://text.pollinations.ai/openai`，模型以 `/models` 返回为准（当前 `openai-fast`） | 公网服务，稳定性和隐私策略由对方决定，勿发敏感内容 |
+| Ollama | local | **无需** | 本机 `http://127.0.0.1:11434/v1` | 启动后 `team scan` 自动发现已拉取模型 |
+| LM Studio | local | **无需** | 本机 `http://127.0.0.1:1234/v1` | 需在 LM Studio 里先加载模型 |
+| LLaMA.cpp | local | **无需** | 本机 OpenAI 兼容端口（默认探测 8080） | `llama-server` 启动后可用 |
+| BazaarLink | free-tier | 需 Key | 注册后 `models.py add bazaarlink` + `key set` | 免费额度以平台为准 |
+| BytePlus Ark | free-tier | 需 Key | `add byteplus` + `key set` | 字节系，区域/额度以平台为准 |
+| Cloudflare | free-tier | 需 Key | `add cloudflare` + `key set` | Workers AI / AI Gateway |
+| Gemini | free-tier | 需 Key | `add gemini` + `key set` | OAuth 登录需另导入令牌 |
+| Kilo.ai | free-tier | 需 Key | `add kilo` + `key set` | 免费池，上游会声明 prompt 可能被记录 |
+| Kimchi | free-tier | 需 Key | `add kimchi` + `key set` | 免费额度以平台为准 |
+| NVIDIA NIM | free-tier | 需 Key | `add nvidia_nim` + `key set` | 开发者计划免费额度 |
+| Ollama Cloud | free-tier | 需 Key | `add ollama_cloud` + `key set` | 云端服务，非本机 |
+| OpenRouter | free-tier | 需 Key | `add open_router` + `key set` | 选择带 `:free` 的模型 |
+| OpenCode Zen | free-tier | 需 Key，但**默认接不通** | — | 需要动态会话 id + 专属请求头，按普通 API Key 接入会失败；请用参考项目的插件 |
+
+> 另有 60+ 家自带 Key 的平台（DeepSeek 官方 API、Kimi、Qwen、GLM、MiniMax、Mistral、
+> Groq、Cerebras、SambaNova、SiliconFlow、Together、Fireworks、Nebius、xAI 等）在
+> `assets/providers.registry.json`，用 `python scripts/models.py providers --search <名字>`
+> 查询。任何一家都需要先配置 Key、再 `team scan` 让你确认后才会参与调用。
+
 离线自测（不联网、不花钱）：`python scripts/selftest_models.py`，覆盖三线协议、429 回退、
 400 不回退、凭据脱敏、模型级冷却、精确 pin、家族独立性、跨进程状态锁、受保护家族直连拦截、
 凭据命令延迟执行、codex 委托的 cwd 与空响应等 136 项。
