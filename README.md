@@ -3,7 +3,7 @@
 用于 **2 个及以上大模型协作** 的调度与对接：谁负责、怎么交接、评审结论怎么判断可信、出错怎么退。只管协作机制——代码、文档、数据、方案都适用；代码风格、写作、排版这些领域规则属于项目自己的事实包与 DoD，不写进这里。
 
 - 仓库：<https://github.com/zlzyangreal/coordination_of_multiple_large_models>
-- 版本：1.6.0（2026-10-24）
+- 版本：1.7.0（2026-10-27）
 - 上一代：`多模型协作Spec.md` v2.4.1，已冻结，仅作留档
 
 ## 安装
@@ -40,9 +40,10 @@ git push
 ```
 coordination_of_multiple_large_models/
 ├── README.md            本文件（给人看）
-├── SKILL.md             入口：何时用、16 条硬规则、6 步流程（英文，给 Agent 读）
+├── SKILL.md             入口：何时用、19 条硬规则、6 步流程（英文，给 Agent 读）
 ├── references/
 │   ├── environment.md           环境检查、工具链、网络三查/Clash、权限
+│   ├── model-access.md          模型接入：三条车道、凭据、发现/验活、路由、故障与回退、边界
 │   ├── model-registry.md        模型登记与验活、路由、额度分档摘要
 │   ├── quota-routing.md         5h/7d 额度读取、分档、节奏、保底、成本校准
 │   ├── calling-gpt.md           调用入口、持久化、评审调用、可观测性、.ps1 编码、中断收尾
@@ -52,18 +53,95 @@ coordination_of_multiple_large_models/
 ├── scripts/
 │   ├── check_env.py             一键环境自检（codex 路径/版本、进程、代理、可写、实时额度）
 │   ├── session.py               契约锚点：pin / check（漂移）/ status（状态行）/ note
-│   ├── run_gpt.py               唯一调用入口：持久化、评审 schema 校验、前后额度、自动台账
+│   ├── run_gpt.py               唯一 GPT 调用入口：持久化、评审 schema 校验、前后额度、自动台账
+│   ├── models.py                多平台模型接入 CLI：init/providers/add/key/list/discover/test/
+│   │                            use/route/chains/call/health/budget/doctor
+│   ├── model_registry.py        内置 76 家提供商注册表 + provider/model 语法、端点、请求头
+│   ├── model_config.py          项目级配置/凭据存储（0600）/运行状态/掩码与脱敏/跨进程锁
+│   ├── model_http.py            三种线协议（chat/responses/messages）、列表探测、失败分类
+│   ├── model_route.py           模型清单、能力/额度/健康路由、家族独立性、降级链
 │   ├── quota.py                 实时额度（app-server）→ 档位 S/A/B/C/R/U → 分工与调用方式
 │   ├── validate_result.py       评审结果 JSON Schema + 回显 + 单元覆盖校验（拦截不合规结果）
 │   ├── schema_for_codex.py      把契约派生成 codex strict 模式的 schema（--output-schema 必须）
 │   ├── reap_turns.py            收尾卡在 inProgress 的回合（先备份、只改该状态）
-│   └── build_envelope.py        生成请求信封（hash/mtime/units/prior_findings/schema 路径）
+│   ├── build_envelope.py        生成请求信封（hash/mtime/units/prior_findings/schema 路径）
+│   └── selftest_models.py       模型层离线自测（本地 mock 提供商，不花额度、不联网）
 └── assets/
     ├── envelope.example.yaml    信封示例（零写盘 + prior_findings）
     ├── result.schema.json        评审结果的结构约束
     ├── call.schema.json          调用记录的结构约束
-    └── facts-pack.example.md     事实包模板（constraints 与 budgets 分栏）
+    ├── facts-pack.example.md     事实包模板（constraints 与 budgets 分栏）
+    ├── providers.registry.json   内置提供商注册表（76 家，来自 dsh-our-free-model，MIT）
+    ├── providers.registry.NOTICE.md  数据来源与许可说明
+    └── models.config.example.json    模型配置示例（API Key / 本地 / 自定义网关 / 账号令牌）
 ```
+
+## 模型接入与统一管理（v1.7.0 起）
+
+参考 `dsh-our-free-model` 的多渠道做法，把"免费模型、自有平台账号登录、API Key、自定义 API
+地址、本地部署"统一成**同一个可选清单**。原来的两条调用通道原样保留，且是默认值：
+
+| 车道 | 写法 | 谁来调 | 说明 |
+|---|---|---|---|
+| GPT / codex | `codex:auto`、`codex:<slug>` | 只走 `scripts/run_gpt.py` | **受保护**：持久化、schema、额度台账都不变 |
+| DeepSeek / dsh | `dsh:auto`、`dsh:<slug>` | 宿主会话（lead 本人） | **受保护**：脚本不会另起一个 DeepSeek 调用者 |
+| 任意 HTTP 提供商 | `<provider>/<model>` | `scripts/models.py call` | 可选：免密/免费、API Key、自定义地址、本地服务、账号令牌 |
+| 降级链 | `chain:<name>` | `models.py call --chain` | 命名有序链，`fallback`/`round-robin`/`smart`/`pace` |
+
+`models.py call --model dsh:...` 会直接拒绝（exit 2）并说明原因；`models.py test codex:auto`
+委托给 `run_gpt.py --probe`。也就是说 **GPT 仍然只有 run_gpt.py 一条路，DeepSeek 仍然只走 dsh**。
+若确实要用 HTTP 直连 GPT/DeepSeek 家族的模型，必须在提供商配置里写
+`"allowProtectedFamily": true`——这是显式的第二条路，不会被静默替换。
+
+```bash
+python scripts/models.py init                 # 建 <项目>/_work/models/config.json
+python scripts/models.py providers --search deep
+python scripts/models.py add deepseek         # 内置 76 家之一
+python scripts/models.py key set deepseek     # 从 stdin 读，只回显 …末四位
+python scripts/models.py discover deepseek    # 拉实时模型清单（不花钱）
+python scripts/models.py add ollama           # 本机模型，无需凭据
+python scripts/models.py add-custom my_gw --base-url https://llm.internal/v1 \
+    --models internal-chat-1 --format openai-chat --auth apiKey
+python scripts/models.py list                 # 清单 + 可用性（不可用会写原因）
+python scripts/models.py test deepseek        # 验活（列表探测；--generate 才花一次生成）
+python scripts/models.py use review codex:auto        # 按角色切换（项目级）
+python scripts/models.py route --role review --producer codex:auto   # 选主 + 回退链
+python scripts/models.py chains set review-safe \
+    --models codex:auto,deepseek/deepseek-v4-pro,ollama/qwen3:8b
+python scripts/models.py call --chain review-safe --prompt-file brief.md --output out.md
+python scripts/models.py health | budget | doctor
+```
+
+几条关键规则（完整版见 `references/model-access.md`）：
+
+- **配置按项目隔离**：配置/凭据/状态都在 `<项目>/_work/models/` 下，两个项目互不影响；只有
+  显式 `--scope user` 才写用户级（`~/.coord-models`）。`COORD_MODELS_HOME` 可改用户级目录。
+- **凭据优先级**：`credential`（env/file/command）> 内联 `apiKey`（会警告）> 0600 凭据库 >
+  注册表声明的环境变量。`list/route/doctor` 这类只读命令**不会执行**配置里的取令牌命令；
+  只有真正的 call/test/discover 才会执行，且用 `argv` 直接调用、不经 shell。
+- **不泄露**：终端/状态/调用日志只出现 `hasKey` 和 `…末四位`；提供商回显的报错会先按密钥脱敏，
+  失败命令的 stderr 一律不显示（登录命令失败时最可能打印令牌）。Windows 上用 icacls 收 ACL，
+  `doctor` 校验实际权限，收不紧会直接报错。
+- **可用性与回退**：按状态码判定失败类型。鉴权/欠费/权限封整家提供商；429、5xx、超时、模型不存在
+  只封该模型（同一家的其它模型仍可回退）；URL 级 404 / 400 属于请求缺陷，**不回退**，直接 exit 4。
+  重试次数有上限（`retryTransient`，0 表示只试一次），每次尝试都落 `model_calls.jsonl`。
+- **路由**：`--pin` 是精确的，用不了就 exit 3，绝不换成另一个模型；`use` 是持久化的角色切换；
+  `produce` 按额度档位决定谁生产（S/A 交给 GPT，B/C/R 由 lead 生产）；`review` 会排除生产者的
+  家族，家族不明的聚合行默认不能当独立评审（`--allow-unknown-family` 可显式承担风险）。
+- **额度与预算**：HTTP 提供商可在配置里写 `limits.callsPerDay/tokensPerDay`，`models.py budget`
+  对照本地计数；没配额度就按"未知"处理，不会当成无限。GPT 仍看 `quota.py` 的 5h/周额度。
+- **边界**：浏览器 OAuth 登录流、以及需要动态会话 id + 专属请求头的匿名免费车道（参考项目的
+  opencode/Kilo 车道）不在本 skill 内复刻——OAuth 类在清单里标成"不可驱动"，账号登录请用
+  厂商 CLI，拿到 token 后用 `credential: {source: command|file}` 导入。本 skill 是客户端，
+  不做转发网关。
+
+离线自测（不联网、不花钱）：`python scripts/selftest_models.py`，覆盖三线协议、429 回退、
+400 不回退、凭据脱敏、模型级冷却、精确 pin、家族独立性、跨进程状态锁、受保护家族直连拦截、
+凭据命令延迟执行、codex 委托的 cwd 与空响应等 95 项。
+
+补充两条容易踩的边界：HTTP 提供商配置好即可用于普通调用，但**未验证（没跑过 `test` 或成功
+调用）时不会进入 `review` 角色**——评审门不做"尽力而为"；`add`/`use`/`remove` 会写
+`_work/models/model_changes.log`，换模型有据可查。
 
 ## 额度自适应（v1.3.0 起）
 
@@ -133,7 +211,7 @@ python scripts/quota.py --note "交稿前"                  # 往 _work/quota_le
 | 事实包把"规模上限"当硬约束审（页数、行数、PR 大小都是预算） | 事实包拆 `constraints`（违反即返工）与 `budgets`（超限只报 `notice`，不得作否决理由）；模板 `assets/facts-pack.example.md` |
 | 同一模型的草稿由它自己放行 | advisory draft 计入生产：对应 finding 标 `origin: advisory-derived`，不计入独立评审；只有单模型可用时，交付必须写"本轮评审非独立（同源）" |
 | 额度读取与台账没有执行点 | "一次 runner 调用 = 一批"；runner 每次自动写一行 `_work/quota_ledger.md`；每条用户消息读一次 live 额度 |
-| SKILL 可在会话内静默失效 | 每轮首行状态行：`SKILL v1.6.0 (pinned 19:36) \| quota 5h 78% / week 96% \| 阶段：…`；中断当场声明并补门；复盘固定问"本轮 skill 是否中断" |
+| SKILL 可在会话内静默失效 | 每轮首行状态行：`SKILL v1.7.0 (pinned 19:36) \| quota 5h 78% / week 96% \| 阶段：…`；中断当场声明并补门；复盘固定问"本轮 skill 是否中断" |
 | 证据没绑定到实际被读的东西 | 评审实际读的派生件（diff / dump / 导出）在调用前立即生成，`build_envelope.py --review-input` 把 sha256(8)+mtime 记进 `_work/rounds.md`；未记录前交付不得声称"版本已绑定"（信封结构按决议暂不动） |
 
 一句话：v1.4.0 解决"怎么调用"，v1.5.0 解决"调用了算不算数"，v1.6.0 解决"换到代码/数据/方案也成立"。
@@ -159,6 +237,7 @@ python scripts/quota.py --note "交稿前"                  # 往 _work/quota_le
 
 | 版本 | 日期 | 变更 |
 |---|---|---|
+| 1.7.0 | 2026-10-27 | 多平台模型接入与统一管理：新增 `scripts/models.py`（init/providers/add/key/list/discover/test/use/route/chains/call/health/budget/doctor）、`model_registry.py`（内置 76 家提供商注册表 + id 语法）、`model_config.py`（项目级配置、0600 凭据库、状态与跨进程锁、脱敏）、`model_http.py`（chat/responses/messages 三线协议、失败分类）、`model_route.py`（清单、能力/额度/健康路由、家族独立性、降级链）与 `selftest_models.py`（95 项离线自测）；GPT 仍只走 `run_gpt.py`、DeepSeek 仍只走 dsh 会话，HTTP 直连这两族需显式 `allowProtectedFamily`；凭据按项目隔离、只读命令不执行取令牌命令；新增 `references/model-access.md`、`assets/providers.registry.json`（MIT，附 NOTICE）与 `assets/models.config.example.json`；SKILL 增加第 17~19 条硬规则 |
 | 1.6.0 | 2026-10-24 | 去特化：评审单元由"页"改为通用 `units`（文件 / 片段 / diff / 接口 / 单元格 / 页……），`page_map`/`pages_seen`/`title_confirmed` 改为 `units`/`units_seen`/`units_confirmed`；目录工件改用树哈希；DoD、事实包、环境、清理里的文档/排版专用表述移除；schema 强制与零写盘不变 |
 | 1.5.0 | 2026-10-24 | 修第二份反馈单 BUG-1~9：评审零写盘（`artifact_access`/`result_capture`）、契约 pin 与漂移（`session.py`）、评审强制 schema 并在 runner 内校验（exit 3，另加 `validate_result.py`）、信封必填 `prior_findings` 由台账生成、事实包拆 constraints/budgets、advisory draft 计入生产（`origin`）、每消息读额度 + runner 自动台账、每轮状态行与中断声明；新增 `schema_for_codex.py`（codex strict 模式派生）与 `assets/facts-pack.example.md` |
 | 1.4.0 | 2026-10-24 | 修反馈单 BUG-1~6：额度改实时源（app-server `account/rateLimits/read`），过期样本报 `U` 不再伪造成 100%；新增 `scripts/run_gpt.py` 统一调用入口（默认持久化、运行时解析 codex、前后额度、调用记录）与 `scripts/reap_turns.py`（收尾 `inProgress`）；新增 `references/calling-gpt.md` 与 `assets/call.schema.json`；补 `.ps1` BOM 与 `bin/<hash>` 约束 |

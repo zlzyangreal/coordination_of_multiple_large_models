@@ -4,6 +4,13 @@ One entry point, one record per call. Hand-written `codex exec` invocations are 
 one-off diagnosis only; everything that produces or reviews an artifact goes through
 `scripts/run_gpt.py`.
 
+`scripts/models.py` does not add a second GPT path: its `codex:<slug>` lane builds a
+`run_gpt.py` invocation (same runner, same record, same quota ledger, with
+`--calls-dir`/`--ledger` rooted in the selected project) and returns the runner's exit
+code. `models.py test codex:auto` is `run_gpt.py --probe`, not a direct `codex exec`.
+The `dsh:` lane is refused from scripts on purpose — the lead session is the DeepSeek
+caller.
+
 ## Why (the failure this prevents)
 
 Production calls were being copied from the environment probe, which used

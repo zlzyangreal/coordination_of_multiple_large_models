@@ -1,0 +1,60 @@
+{
+  "version": 1,
+  "comment": "Project-scoped model access. Copy to <project>/_work/models/config.json or let `models.py init` create it. Secrets belong in credentials.json (`models.py key set`), not in this file. See references/model-access.md.",
+  "providers": {
+    "deepseek": {
+      "enabled": true,
+      "models": ["deepseek-v4-pro"],
+      "_comment": "a provider from the vendored registry; `enabled` + a credential is enough. An inline apiKey is allowed but warned about."
+    },
+    "ollama": {
+      "enabled": true,
+      "_comment": "local server, no credential; `discover` asks it for the pulled models"
+    },
+    "my_gateway": {
+      "enabled": true,
+      "name": "Company gateway",
+      "baseUrl": "https://llm.internal.example/v1",
+      "modelsUrl": "https://llm.internal.example/v1/models",
+      "format": "openai-chat",
+      "auth": {"kind": "apiKey"},
+      "models": ["internal-chat-1", "internal-vision-1"],
+      "credential": {"source": "env", "name": "COMPANY_LLM_KEY"},
+      "limits": {"callsPerDay": 200, "tokensPerDay": 2000000},
+      "overrides": {
+        "internal-vision-1": {"vision": true, "contextWindow": 64000}
+      }
+    },
+    "qoder_local": {
+      "enabled": true,
+      "baseUrl": "http://127.0.0.1:8326/v1",
+      "format": "openai-chat",
+      "auth": {"kind": "token"},
+      "models": ["qoder-auto"],
+      "credential": {"source": "command", "argv": ["qoder", "auth", "token"],
+                     "timeoutSeconds": 30},
+      "_comment": "account login done by the vendor CLI; the skill only imports the token it mints. `argv` avoids a shell."
+    }
+  },
+  "lanes": {
+    "codex": {"enabled": true, "models": ["auto"], "effort": null, "sandbox": "read-only"},
+    "dsh": {"enabled": true, "models": ["auto"]}
+  },
+  "roles": {
+    "lead": {"model": "dsh:auto"},
+    "produce": {"model": "auto"},
+    "review": {"model": "codex:auto"},
+    "vision": {"model": "codex:auto"},
+    "mechanical": {"model": "dsh:auto"}
+  },
+  "chains": {
+    "review-safe": {
+      "models": ["codex:auto", "deepseek/deepseek-v4-pro", "ollama/qwen3:8b"],
+      "strategy": "fallback",
+      "_comment": "codex stays first; the HTTP rows are fallbacks, and `deepseek` over HTTP needs allowProtectedFamily: true"
+    }
+  },
+  "preference": ["codex", "dsh", "ollama"],
+  "defaults": {"maxOutput": 4096, "timeoutSeconds": 180, "maxFallback": 3,
+               "retryTransient": 1}
+}
