@@ -235,6 +235,11 @@ python scripts/models.py call --model codex:auto --prompt-file brief.md --dry-ru
 - The codex lane builds a `run_gpt.py` invocation (`--calls-dir` and `--ledger` inside
   the selected project, `cwd=project`) and returns the runner's exit code; an empty
   payload is a failed attempt, not a success.
+- `call --role lead` / `--role mechanical` refuses: that role is the session, not a model
+  a script can call. `call --role produce` also refuses when the quota tier assigned
+  production to the lead, instead of silently calling codex as a substitute lead. A
+  `dsh` row is never offered as a fallback link, because a fallback that cannot be
+  called is not a fallback.
 - The HTTP lane is non-streaming by design: a coordination call is a bounded unit of
   work whose result the lead reads in full, and every OpenAI-compatible local server
   implements the non-streaming shape.

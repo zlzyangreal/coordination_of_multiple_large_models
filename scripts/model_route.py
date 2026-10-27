@@ -507,6 +507,20 @@ def route(cfg, state, role, needs=None, exclude_families=(), pin=None, project="
 
     primary = ordered[0]
     fallback = ordered[1:1 + max(0, limit)]
+    # A script cannot call the lead session. A fallback that cannot be called is
+    # not a fallback, and substituting a different model for the lead role would
+    # silently change who owns the deliverable.
+    if role in ("lead", "mechanical") or primary["lane"] == "dsh":
+        if fallback:
+            notes.append("no script-side fallback: the lead role is the host session "
+                         "itself, not a model a script can call")
+        fallback = []
+    else:
+        callable_fallback = [entry for entry in fallback if entry["lane"] != "dsh"]
+        if len(callable_fallback) != len(fallback):
+            notes.append("dsh:auto dropped from the fallback: a script cannot call the "
+                         "lead session")
+        fallback = callable_fallback
     if primary.get("lane") != protected_lane and protected_lane and not pin:
         notes.append(f"protected lane {protected_lane!r} is unavailable for this role; "
                      f"the fallback is recorded in the call log")

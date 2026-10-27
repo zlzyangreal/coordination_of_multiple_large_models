@@ -536,6 +536,34 @@ def extended_cases(env, project, port_a, port_b, port_c):
                                    "--dry-run"], env)
     check("call --role produce reaches the planner without a traceback",
           code == 0 and "dry-run" in out.lower(), out + err)
+    code, out, err = run(project, ["call", "--role", "lead", "--prompt", "hi",
+                                   "--dry-run"], env)
+    check("call --role lead refuses instead of substituting another model",
+          code == 2 and "lead session" in (out + err), out + err)
+    state_path = os.path.join(project, "_work", "models", "state.json")
+    state = json.load(open(state_path, encoding="utf-8"))
+    from datetime import datetime, timezone
+    state.setdefault("quota", {})["codex"] = {
+        "at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "data": {"tier": "R", "remaining": 5.0, "weekly_remaining": 50.0,
+                 "hours_left": 3.0, "source": "test"}}
+    json.dump(state, open(state_path, "w", encoding="utf-8"), ensure_ascii=False, indent=2)
+    code, out, err = run(project, ["call", "--role", "produce", "--prompt", "hi",
+                                   "--no-quota", "--dry-run"], env)
+    check("call --role produce refuses when the tier gives production to the lead",
+          code == 2 and "quota tier" in (out + err), out + err)
+    state = json.load(open(state_path, encoding="utf-8"))
+    state.pop("quota", None)
+    json.dump(state, open(state_path, "w", encoding="utf-8"), ensure_ascii=False, indent=2)
+    code, out, err = run(project, ["route", "--role", "lead", "--no-quota", "--json"], env)
+    lead_plan = json.loads(out) if code == 0 else {}
+    check("the lead role has no script-side fallback",
+          code == 0 and lead_plan.get("fallback") == [], out + err)
+    code, out, err = run(project, ["route", "--role", "review", "--no-quota", "--json"], env)
+    review_plan = json.loads(out) if code == 0 else {}
+    check("the review fallback never lists the lead session",
+          code == 0 and all(entry["lane"] != "dsh"
+                            for entry in review_plan.get("fallback", [])), out + err)
 
     # Round-2: reasoning need is enforced, including for an exact pin.
     _patch_config(config_path, lambda cfg: cfg["providers"]["mock_a"]["overrides"]

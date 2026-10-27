@@ -1151,6 +1151,15 @@ def cmd_call(args):
     else:
         return fail("choose --model, --chain or --role", 2)
 
+    # The lead role is the session, not a callable model: a script must not
+    # produce as the lead (and must not substitute codex for it silently).
+    if args.role in ("lead", "mechanical"):
+        return fail(f"role {args.role!r} is the lead session itself; models.py does not "
+                    f"call it. Run the work in the session.", 2)
+    if args.role == "produce" and links and links[0]["lane"] == "dsh":
+        return fail("the quota tier assigns production to the lead; do the work in the "
+                    "session (or pin a codex/HTTP model explicitly).", 2)
+
     if args.dry_run:
         for entry in links:
             if entry["lane"] == "http":
