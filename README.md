@@ -14,7 +14,7 @@
 ```powershell
 New-Item -ItemType Junction `
   -Path  "D:\deepseek\resources\runtime\office-skills\coordination_of_multiple_large_models" `
-  -Target "F:\deepseek_workspace\coordination_of_multiple_large_models"
+  -Target "D:\deepseek_workspace\coordination_of_multiple_large_models"
 ```
 
 - 挂完需要**重启 DSH** 才会重新扫描技能目录。
@@ -24,7 +24,7 @@ New-Item -ItemType Junction `
 ## 同步
 
 ```powershell
-cd F:\deepseek_workspace\coordination_of_multiple_large_models
+cd D:\deepseek_workspace\coordination_of_multiple_large_models
 git pull --rebase
 # 改完
 git add -A
