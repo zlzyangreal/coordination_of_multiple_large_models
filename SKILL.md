@@ -41,12 +41,13 @@ Skip for single-model, single-file, one-shot work — but still run `scripts/che
 17. **Two protected call paths.** GPT only through `scripts/run_gpt.py`; DeepSeek only through the DSH host session. `models.py` delegates the first and refuses the second. A GPT/DeepSeek model reached over HTTP needs `allowProtectedFamily: true` — an explicit second path, never a silent replacement.
 18. **Credentials never leave the store.** `models.py key set` writes a 0600 file (ACL-hardened on Windows); status output is `hasKey` + `…last4`; provider errors are redacted before print/log; a read-only view (`list`/`route`/`doctor`) never executes a configured credential command.
 19. **Pin and independence are exact.** A `--pin` that is unusable fails routing instead of substituting another model. A review must be a different family from its producer; a family that cannot be established is not an independent reviewer unless the config declares it.
+20. **Team changes need a yes.** At task start run `models.py team scan`, show the candidates (availability, family, context/limits, verified state) and ask the user which may join. Add only approved candidates (`team add`), record refusals (`team decline`). A declined channel is not used for that task; the protected lanes and already-approved agents remain. A changed endpoint, wire, auth mode or model invalidates the scan; rescan and ask again. Never add a provider silently.
 
 ## Workflow
 
 | # | Step | Gate | Read |
 |---|---|---|---|
-| 0 | Pin contract, environment, quota | no pin / no green, no routing | [references/environment.md](references/environment.md) |
+| 0 | Pin contract, environment, quota, team scan + approval | no pin / no green / no team decision, no routing | [references/environment.md](references/environment.md) → [references/model-access.md](references/model-access.md) |
 | 1 | Verify models, read quota, route | an unverified HTTP model is not a review default | [references/model-registry.md](references/model-registry.md) → [references/model-access.md](references/model-access.md) → [references/quota-routing.md](references/quota-routing.md) |
 | 2 | Task contract, board, facts pack (constraints vs budgets) | no parallel work before facts freeze | [references/execution-and-gates.md](references/execution-and-gates.md) |
 | 3 | Produce + independent review: runner calls, envelopes | producer never self-reviews | [references/calling-gpt.md](references/calling-gpt.md) → [references/handoff-protocol.md](references/handoff-protocol.md) |
@@ -70,7 +71,7 @@ SKILL v1.7.0 (pinned 19:36) | quota 5h 78% / week 96% | 阶段：评审
 | `python scripts/check_env.py --short-call` | Resolve Codex, version, processes, proxy, reachability, writability, live quota |
 | `python scripts/session.py pin\|check\|status\|note` | Contract pin/drift, status line, round notes (review-input hashes) |
 | `python scripts/run_gpt.py --prompt-file <f> --cd <dir> --request-id <id>` | **The** GPT call path: persistent, records thread/rollout/quota, `--schema` + `--result-path` for reviews |
-| `python scripts/models.py <init\|providers\|add\|key\|account\|list\|discover\|test\|use\|route\|chains\|call\|health\|budget\|doctor>` | Per-project model access: provider catalog, 0600 credentials, vendor-mediated account login, availability, routing, chains, unified calls, budgets |
+| `python scripts/models.py <init\|providers\|add\|key\|account\|team\|list\|discover\|test\|use\|route\|chains\|call\|health\|budget\|doctor>` | Per-project model access: provider catalog, 0600 credentials, vendor-mediated account login, task team scan/approval, availability, routing, chains, unified calls, budgets |
 | `python scripts/quota.py [--source {auto,live,log}] [--json] [--remaining 62 --minutes 210]` | 5 h / weekly remaining, tier S/A/B/C/R/U, who produces, call shape |
 | `python scripts/validate_result.py --result <json> [--envelope <yaml>]` | Schema + echo + unit-coverage validation; exit 1 blocks adoption |
 | `python scripts/schema_for_codex.py --schema <json> --out <f>` | Derive the strict schema codex requires (run_gpt does it automatically) |

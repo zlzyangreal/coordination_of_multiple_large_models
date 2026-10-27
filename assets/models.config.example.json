@@ -62,5 +62,6 @@
   },
   "preference": ["codex", "dsh", "ollama"],
   "defaults": {"maxOutput": 4096, "timeoutSeconds": 180, "maxFallback": 3,
-               "retryTransient": 1}
+               "retryTransient": 1},
+  "_team": "Run `models.py team scan`, ask the user, then `team add` the approved ids. Team state lives in _work/models/team.json; without it every configured provider participates."
 }

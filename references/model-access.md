@@ -124,6 +124,49 @@ python scripts/models.py account list                 # configured accounts
   channels; this is the supported way to bring one of them in without reimplementing its
   sign-in.
 
+## Task team: scan, ask, add
+
+Configured is not the same as approved. At the start of a task the agent scans what could
+join, shows the user the candidates, and adds only the ones the user accepts:
+
+```bash
+python scripts/models.py team scan            # configured + local ports + env keys found
+python scripts/models.py team scan --json     # for the assistant to present
+python scripts/models.py team add mock_a/mock-ok local_0/qwen3:8b
+python scripts/models.py team decline mock_a/mock-400
+python scripts/models.py team show
+python scripts/models.py team clear           # back to "every configured provider"
+```
+
+- **Scan never joins anything.** It reports configured models with availability, family,
+  context window and declared limits, probes common local ports (Ollama 11434, LM Studio
+  1234, llama.cpp 8080, vLLM 8000) plus any `--detect <base-url>`, and offers registry
+  providers whose API-key environment variable is already set. No secret is printed.
+- **Team file = the task's allowlist.** `<project>/_work/models/team.json` records
+  `added` and `declined`. **Its existence is the switch**: any existing team document is
+  an allowlist, even `{}`; a row that is not in `added` is inactive (`usable: false`,
+  reason "not in this task's team"), even if it is configured. A **missing** file is the
+  v1.7.0 behaviour (every configured provider participates). Malformed team files fail
+  closed.
+- **Approval is bound to what was scanned.** Each candidate carries a fingerprint of
+  provider, endpoint, wire, auth kind and model. If the config changes after the scan,
+  `team add` refuses that candidate and asks for a new scan and a new user decision.
+- **The protected lanes are never "team members".** `dsh`/`codex` stay the defaults and
+  are not affected by team approval; only optional HTTP rows are gated.
+- **Approval verifies the exact model.** `team add` requires the approved model id to be
+  present in the provider's listing; a provider that publishes no listing is refused
+  unless `--allow-unverified` is passed deliberately. A protected-family row cannot be
+  added without `allowProtectedFamily`; a failed verification leaves the team and health
+  state untouched.
+- **Unapproved rows are not probed.** `test`/`test --generate`, `call`, chains and pins
+  refuse a non-team row before any credential resolution or network request.
+- **Refusal is recorded, not remembered silently.** `team decline` writes the candidate to
+  `declined`; it is not reconsidered in this task. Clearing the team restores the
+  all-configured mode.
+- The scan result is cached in `team_scan.json` so `team add` can configure a detected
+  local service (base URL + discovered models) without the user retyping it; the
+  fingerprint invalidates a stale cache.
+
 ## Providers and model rows
 
 `models.py providers` lists the vendored registry (76 providers: 61 API-key, 10

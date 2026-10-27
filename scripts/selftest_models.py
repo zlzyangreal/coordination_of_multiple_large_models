@@ -13,6 +13,7 @@ Run: `python scripts/selftest_models.py`. Exit 0 only when every case passes.
 The protected lanes are asserted structurally, never executed: `codex:*` must
 resolve to a `run_gpt.py` command (dry-run) and `dsh:*` must be refused.
 """
+import hashlib
 import json
 import os
 import subprocess
@@ -226,6 +227,7 @@ def main():
     try:
         cases(env, project, other, port_a, port_b, port_c)
         extended_cases(env, project, port_a, port_b, port_c)
+        team_cases(env, work, port_a, port_b)
     finally:
         for server in (server_a, server_b, server_c):
             server.shutdown()
@@ -929,6 +931,200 @@ def extended_cases(env, project, port_a, port_b, port_c):
     kind, scope, _, _, _ = model_http.classify(404, "model 'x' does not exist")
     check("a 404 that names a model is model_missing",
           (kind, scope) == ("model_missing", "model"))
+
+
+def team_cases(env, work, port_a, port_b):
+    """Round-6: scan candidates, ask the user, form the approved team."""
+    project = os.path.join(work, "team-project")
+    os.makedirs(project)
+    base_a = f"http://127.0.0.1:{port_a}/v1"
+    base_b = f"http://127.0.0.1:{port_b}/v1"
+    config_path = os.path.join(project, "_work", "models", "config.json")
+    team_path = os.path.join(project, "_work", "models", "team.json")
+    state_path = os.path.join(project, "_work", "models", "state.json")
+
+    def digest(path):
+        return (hashlib.sha256(open(path, "rb").read()).hexdigest()
+                if os.path.isfile(path) else None)
+    run(project, ["init"], env)
+    for args in (
+        ["add-custom", "t_a", "--base-url", base_a, "--models",
+         "mock-ok,mock-400", "--auth", "none"],
+        ["add-custom", "t_b", "--base-url", base_b, "--format", "anthropic-messages",
+         "--models", "claude-mock", "--auth", "apiKey"],
+        ["add-custom", "t_stale", "--base-url", base_a, "--models", "mock-ok",
+         "--auth", "none"],
+        ["add-custom", "t_missing", "--base-url", base_a, "--models", "ghost",
+         "--auth", "none"],
+        ["add-custom", "t_prot", "--base-url", base_a, "--models", "gpt-4o",
+         "--auth", "none"],
+        ["add-custom", "t_chat", "--base-url", base_a, "--models", "mock-ok",
+         "--auth", "none"],
+    ):
+        run(project, args, env)
+    _patch_config(config_path, lambda cfg: cfg["providers"]["t_a"].__setitem__(
+        "overrides", {"mock-ok": {"family": "teamlab"}, "mock-400": {"family": "teamlab"}}))
+    _patch_config(config_path, lambda cfg: cfg["providers"]["t_b"].__setitem__(
+        "overrides", {"claude-mock": {"family": "teambeta"}}))
+    run(project, ["key", "set", "t_b", "--from-env", "TEST_KEY"], env)
+
+    code, out, err = run(project, ["team", "scan", "--json", "--no-local"], env)
+    scan = json.loads(out) if code == 0 else {}
+    ids = [row["id"] for row in scan.get("candidates", [])]
+    check("team scan lists configured candidates without joining them",
+          code == 0 and "t_a/mock-ok" in ids and scan.get("team") is None, out + err)
+    candidate = next((row for row in scan.get("candidates", [])
+                      if row["id"] == "t_a/mock-ok"), {})
+    check("team scan reports context and declared limits for the decision",
+          bool(candidate.get("contextWindow")) and bool(candidate.get("maxOutput"))
+          and "limits" in candidate, str(candidate))
+    code, out, err = run(project, ["team", "scan", "--no-local"], env)
+    check("the human scan table shows context and limits",
+          code == 0 and "ctx" in out and "limits" in out, out + err)
+
+    # A protected family offered by the environment cannot be configured into the team.
+    env_team = dict(env, DEEPSEEK_API_KEY="sk-fake-deepseek")
+    code, out, err = run(project, ["team", "scan", "--json", "--no-local"], env_team)
+    scan_env = json.loads(out) if code == 0 else {}
+    env_candidates = [row for row in scan_env.get("candidates", [])
+                      if row["kind"] == "env" and row["id"].startswith("deepseek/")]
+    if env_candidates:
+        code, out, err = run(project, ["team", "add", env_candidates[0]["id"]], env_team)
+        check("a protected env candidate is refused before configuration",
+              code == 1 and "protected family" in (out + err)
+              and "deepseek" not in (json.load(open(config_path, encoding="utf-8"))
+                                     .get("providers") or {}), out + err)
+
+    # A chatUrl-only change must invalidate the approval too.
+    _patch_config(config_path, lambda cfg: cfg["providers"]["t_chat"].__setitem__(
+        "chatUrl", base_b + "/chat/completions"))
+    code, out, err = run(project, ["team", "add", "t_chat/mock-ok"], env)
+    check("a chatUrl-only change invalidates the scan",
+          code == 1 and "changed since the last scan" in (out + err), out + err)
+
+    # A scan cache without a fingerprint is not an approval.
+    scan_path = os.path.join(project, "_work", "models", "team_scan.json")
+    scan_cache = json.load(open(scan_path, encoding="utf-8"))
+    for row in scan_cache.get("candidates", []):
+        if row.get("id") == "t_a/mock-ok":
+            row.pop("fingerprint", None)
+    json.dump(scan_cache, open(scan_path, "w", encoding="utf-8"), ensure_ascii=False)
+    code, out, err = run(project, ["team", "add", "t_a/mock-ok"], env)
+    check("a scan cache without a fingerprint is refused",
+          code == 1 and "no usable fingerprint" in (out + err), out + err)
+    run(project, ["team", "scan", "--no-local"], env)  # restore a valid cache
+
+    # TEAM-STALE-SCAN-IDENTITY: approval is bound to the endpoint that was scanned.
+    _patch_config(config_path, lambda cfg: cfg["providers"]["t_stale"].__setitem__(
+        "baseUrl", base_b))
+    code, out, err = run(project, ["team", "add", "t_stale/mock-ok"], env)
+    check("a provider changed after the scan cannot join on the old approval",
+          code == 1 and "changed since the last scan" in (out + err)
+          and not os.path.isfile(os.path.join(project, "_work", "models", "team.json")),
+          out + err)
+
+    # TEAM-MODEL-NOT-VERIFIED / TEAM-PROTECTED-ADD-GAP.
+    code, out, err = run(project, ["team", "add", "t_missing/ghost"], env)
+    check("a model absent from the listing is refused",
+          code == 1 and "not in the provider's listing" in (out + err), out + err)
+    code, out, err = run(project, ["team", "add", "t_prot/gpt-4o"], env)
+    check("a protected-family candidate cannot join the team",
+          code == 1 and "protected family" in (out + err), out + err)
+
+    code, out, err = run(project, ["team", "add", "t_a/mock-ok"], env)
+    team_file = os.path.join(project, "_work", "models", "team.json")
+    check("team add joins the approved candidate",
+          code == 0 and os.path.isfile(team_file), out + err)
+    code, out, err = run(project, ["list", "--json"], env)
+    entries = {entry["id"]: entry for entry in json.loads(out)} if code == 0 else {}
+    check("an unapproved provider is inactive once a team exists",
+          entries.get("t_a/mock-ok", {}).get("usable") is True
+          and entries.get("t_a/mock-400", {}).get("usable") is False
+          and "not in this task's team" in str(entries["t_a/mock-400"].get("reason")),
+          out + err)
+    check("the approved candidate can serve as an independent reviewer",
+          run(project, ["route", "--role", "review", "--producer", "dsh:auto",
+                        "--no-quota", "--json"], env)[1].find('"t_a/mock-ok"') >= 0,
+          out + err)
+
+    # TEAM-GATE: every path, not just `list`, must honour the team.
+    code, out, err = run(project, ["call", "--model", "t_a/mock-400", "--prompt", "hi"], env)
+    check("call --model refuses an unapproved row", code == 2, out + err)
+    code, out, err = run(project, ["test", "t_a/mock-400", "--generate"], env)
+    check("test --generate refuses an unapproved row", code == 2, out + err)
+    run(project, ["chains", "set", "teamchain", "--models",
+                  "t_a/mock-400,t_a/mock-ok"], env)
+    code, out, err = run(project, ["chains", "show", "teamchain", "--no-quota", "--json"], env)
+    plan = json.loads(out) if code == 0 else {}
+    check("a chain drops an unapproved link",
+          code == 0 and [link["id"] for link in plan.get("links", [])] == ["t_a/mock-ok"]
+          and any(row["id"] == "t_a/mock-400" for row in plan.get("dropped", [])),
+          out + err)
+    code, out, err = run(project, ["route", "--role", "review", "--pin", "t_a/mock-400",
+                                   "--no-quota"], env)
+    check("an exact pin to an unapproved row fails", code == 3, out + err)
+    code, out, err = run(project, ["test", "t_b", "--generate"], env)
+    check("a provider target with no approved model is not probed", code == 2, out + err)
+
+    # A failed verification must leave both the team and the health state untouched.
+    before_team, before_state = digest(team_path), digest(state_path)
+    code, out, err = run(project, ["team", "add", "t_b/claude-mock"], env)
+    check("a failed verification leaves the team and health unchanged",
+          code == 1 and digest(team_path) == before_team
+          and digest(state_path) == before_state, out + err)
+
+    code, out, err = run(project, ["team", "decline", "t_a/mock-400"], env)
+    check("team decline records the refusal", code == 0 and "declined" in out, out + err)
+    code, out, err = run(project, ["team", "show", "--json"], env)
+    team = json.loads(out) if code == 0 else {}
+    check("team show lists added and declined",
+          "t_a/mock-ok" in (team.get("added") or {})
+          and "t_a/mock-400" in (team.get("declined") or {}), out + err)
+
+    code, out, err = run(project, ["team", "add", "t_a/mock-400"], env)
+    code2, out2, _ = run(project, ["team", "show", "--json"], env)
+    team = json.loads(out2) if code2 == 0 else {}
+    check("re-adding a declined candidate clears the refusal",
+          code == 0 and "t_a/mock-400" in (team.get("added") or {})
+          and "t_a/mock-400" not in (team.get("declined") or {}), out + err + out2)
+
+    code, out, err = run(project, ["team", "add", "t_b/claude-mock"], env)
+    check("a provider with no listing is refused without --allow-unverified", code == 1,
+          out + err)
+    code, out, err = run(project, ["team", "add", "t_b/claude-mock",
+                                   "--allow-unverified"], env)
+    check("an unverified provider can join explicitly", code == 0, out + err)
+
+    code, out, err = run(project, ["team", "clear"], env)
+    code2, out2, err2 = run(project, ["list", "--json"], env)
+    entries = {entry["id"]: entry for entry in json.loads(out2)} if code2 == 0 else {}
+    check("team clear restores the backward-compatible mode",
+          code == 0 and entries.get("t_a/mock-400", {}).get("usable") is True,
+          out + err + out2 + err2)
+
+    code, out, err = run(project, ["team", "scan", "--detect", base_a, "--no-local",
+                                   "--json"], env)
+    scan = json.loads(out) if code == 0 else {}
+    local = [row for row in scan.get("candidates", []) if row["kind"] == "local"
+             and row["id"].endswith("/mock-ok")]
+    check("team scan detects a local OpenAI-compatible service",
+          code == 0 and local and local[0]["id"].startswith("local_"), out + err)
+    if local:
+        code, out, err = run(project, ["team", "add", local[0]["id"]], env)
+        check("a detected local service can join after approval",
+              code == 0 and os.path.isfile(team_file), out + err)
+
+    # TEAM-EMPTY-FILE-BYPASS: an existing team document is an allowlist even empty.
+    run(project, ["team", "clear"], env)
+    with open(team_file, "w", encoding="utf-8") as fh:
+        fh.write("{}")
+    code, out, err = run(project, ["list", "--json"], env)
+    entries = {entry["id"]: entry for entry in json.loads(out)} if code == 0 else {}
+    check("an empty team file still closes the gate",
+          entries.get("t_a/mock-ok", {}).get("usable") is False, out + err)
+    code, out, err = run(project, ["call", "--model", "t_a/mock-ok", "--prompt", "hi"], env)
+    check("an empty team file makes an unapproved call fail", code == 2, out + err)
+    os.remove(team_file)
 
 
 if __name__ == "__main__":

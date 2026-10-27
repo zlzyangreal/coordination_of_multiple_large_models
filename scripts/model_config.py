@@ -87,6 +87,8 @@ def paths(project="."):
         "credentials": os.path.join(models_dir, "credentials.json"),
         "state": os.path.join(models_dir, "state.json"),
         "calls": os.path.join(models_dir, "model_calls.jsonl"),
+        "team": os.path.join(models_dir, "team.json"),
+        "team_scan": os.path.join(models_dir, "team_scan.json"),
     }
 
 
@@ -686,6 +688,66 @@ def mutate(project, fn):
         fn(state)
         save_state(state, project)
         return state
+
+
+# --------------------------------------------------------------------------- task team
+def load_team(project="."):
+    """The task's approved team, or None when no team file exists.
+
+    **Existence is the switch.** A missing file is the backward-compatible mode
+    (every configured provider participates); any existing team document is an
+    allowlist, even `{}` or `{"active": false}`. Treating a present-but-empty file
+    as "no team" would silently re-open every provider after the user declined
+    them. Malformed content fails closed by raising.
+    """
+    path = paths(project)["team"]
+    if not os.path.isfile(path):
+        return None
+    data, err = read_json(path)
+    if err:
+        raise ConfigError(err)
+    if not isinstance(data, dict):
+        raise ConfigError(f"{path}: a team file must be a JSON object")
+    data.setdefault("added", {})
+    data.setdefault("declined", {})
+    if not isinstance(data["added"], dict) or not isinstance(data["declined"], dict):
+        raise ConfigError(f"{path}: `added` and `declined` must be objects")
+    data["active"] = True
+    return data
+
+
+def team_members(project="."):
+    team = load_team(project)
+    return set((team or {}).get("added") or {})
+
+
+def update_team(project, fn):
+    """Read-modify-write the team file (created on first call)."""
+    path = paths(project)["team"]
+    data, err = read_json(path)
+    if err:
+        raise ConfigError(err)
+    data = data if isinstance(data, dict) else {}
+    data.setdefault("version", 1)
+    data.setdefault("added", {})
+    data.setdefault("declined", {})
+    data["active"] = True
+    fn(data)
+    atomic_write(path, json.dumps(data, ensure_ascii=False, indent=2) + "\n")
+    return data
+
+
+def save_team_scan(candidates, project="."):
+    atomic_write(paths(project)["team_scan"],
+                 json.dumps({"at": iso(), "candidates": candidates},
+                            ensure_ascii=False, indent=2) + "\n")
+
+
+def load_team_scan(project="."):
+    data, err = read_json(paths(project)["team_scan"])
+    if err:
+        raise ConfigError(err)
+    return (data or {}).get("candidates") or []
 
 
 def provider_health(state, provider_id):

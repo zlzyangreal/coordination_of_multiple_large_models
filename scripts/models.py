@@ -27,6 +27,7 @@ Exit codes: 0 ok, 1 failure, 2 misuse or unavailable, 3 no usable candidate,
 4 request-scoped defect (do not fall back), 5 every link of the chain failed.
 """
 import argparse
+import hashlib
 import json
 import os
 import socket
@@ -246,7 +247,8 @@ def _write_provider(args, pid, setting, scope):
     previous = providers.get(pid) if isinstance(providers.get(pid), dict) else {}
     merged = dict(previous)
     merged.update({k: v for k, v in setting.items() if v is not None})
-    merged["enabled"] = bool(setting.get("enabled", True)) and not args.no_enable
+    merged["enabled"] = bool(setting.get("enabled", True)) and \
+        not getattr(args, "no_enable", False)
     providers[pid] = merged
     _save_raw(path, raw)
     return path
@@ -600,13 +602,410 @@ def cmd_show(args):
     return 0
 
 
+# --------------------------------------------------------------------------- task team
+TEAM_LOCAL_PORTS = (("ollama", "http://127.0.0.1:11434/v1"),
+                    ("lmstudio", "http://127.0.0.1:1234/v1"),
+                    ("llamacpp", "http://127.0.0.1:8080/v1"),
+                    ("vllm", "http://127.0.0.1:8000/v1"))
+
+
+def _team_scan(args, cfg, project):
+    """Find agents that could join this task, without joining any of them."""
+    state = model_state(project)
+    entries = model_route.catalog(cfg, state, project)
+    team = cfg_mod.load_team(project)
+    candidates = []
+    for entry in entries:
+        if entry["lane"] != "http":
+            continue
+        health = cfg_mod.provider_health(state, entry["provider"])
+        caps = entry.get("capabilities") or {}
+        setting = _setting(entry["provider"], cfg)
+        record = _record(entry["provider"], cfg)
+        candidates.append({
+            "id": entry["id"],
+            "kind": "configured",
+            "provider": entry["provider"],
+            "model": entry["model"],
+            "family": entry["family"],
+            "familyKnown": entry.get("familyKnown", True),
+            "vision": caps.get("vision") is True,
+            "contextWindow": caps.get("contextWindow"),
+            "maxOutput": caps.get("maxOutput"),
+            "limits": setting.get("limits") or {},
+            "usable": entry.get("usable"),
+            "reason": entry.get("reason"),
+            "inTeam": bool(team) and entry.get("inTeam"),
+            "verified": health["status"] == "ok",
+            "fingerprint": _identity_hash(_identity(entry["provider"], entry["model"],
+                                                    record, setting)) if record else None,
+        })
+
+    configured = set((cfg.get("providers") or {}).keys())
+    local_urls = [] if args.no_local else list(TEAM_LOCAL_PORTS)
+    for url in args.detect or []:
+        local_urls.append((f"local_{len(local_urls)}", url))
+    for pid, base in local_urls:
+        if pid in configured:
+            continue
+        probe = {"id": pid, "name": pid, "category": "local", "format": "openai-chat",
+                 "baseUrl": base, "modelsUrl": base.rstrip("/") + "/models",
+                 "auth": {"kind": "none"}, "models": []}
+        try:
+            result = model_http.list_models(probe, None, None, timeout=args.timeout)
+        except Exception:  # noqa: BLE001 - an absent local server is the normal case
+            continue
+        if not result.get("ok") or not result.get("ids"):
+            continue
+        for model_id in result["ids"]:
+            candidates.append({
+                "id": f"{pid}/{model_id}",
+                "kind": "local",
+                "provider": pid,
+                "model": model_id,
+                "family": registry.family(pid, probe, model_id),
+                "familyKnown": True,
+                "vision": False,
+                "usable": True,
+                "reason": None,
+                "inTeam": False,
+                "verified": True,
+                "add": {"provider": pid, "baseUrl": base, "format": "openai-chat",
+                        "auth": {"kind": "none"}, "models": result["ids"],
+                        "modelsUrl": base.rstrip("/") + "/models"},
+                "limits": {},
+                "contextWindow": 131072,
+                "maxOutput": 32768,
+                "fingerprint": _identity_hash(_identity(
+                    pid, model_id,
+                    {"format": "openai-chat", "auth": {"kind": "none"},
+                     "modelsUrl": base.rstrip("/") + "/models"},
+                    {"baseUrl": base})),
+            })
+
+    for record in registry.providers():
+        pid = record["id"]
+        if pid in configured:
+            continue
+        env_name = (record.get("auth") or {}).get("env")
+        if not env_name or not os.environ.get(env_name):
+            continue
+        models = [row.get("id") for row in (record.get("models") or [])][:8]
+        if not models:
+            continue
+        for model_id in models:
+            candidates.append({
+                "id": f"{pid}/{model_id}",
+                "kind": "env",
+                "provider": pid,
+                "model": model_id,
+                "family": registry.family(pid, record, model_id),
+                "familyKnown": True,
+                "vision": False,
+                "usable": True,
+                "reason": None,
+                "inTeam": False,
+                "verified": False,
+                "add": {"provider": pid, "baseUrl": record.get("baseUrl"),
+                        "format": record.get("format") or "openai-chat",
+                        "auth": record.get("auth") or {"kind": "none"},
+                        "models": models,
+                        "modelsUrl": record.get("modelsUrl"),
+                        "chatUrl": record.get("chatUrl"),
+                        "chatPath": record.get("chatPath")},
+                "limits": {},
+                "contextWindow": 131072,
+                "maxOutput": 32768,
+                "fingerprint": _identity_hash(_identity(
+                    pid, model_id, record, {})),
+            })
+    return candidates
+
+
+def model_state(project):
+    return cfg_mod.load_state(project)
+
+
+def _identity(provider_id, model_id, record, setting):
+    """What the user actually approved: the resolved endpoints and wire.
+
+    Hashing only the base URL was not enough: a `chatUrl`/`chatPath` override
+    changes where the prompt goes without touching the base. Both the completion
+    and listing endpoints are part of the identity.
+    """
+    record = record or {}
+    base = (setting or {}).get("baseUrl")
+    return {
+        "provider": provider_id,
+        "model": model_id,
+        "baseUrl": registry.base_url(record, base),
+        "completionUrl": registry.chat_url(record, base),
+        "listingUrl": registry.models_url(record, base),
+        "format": record.get("format"),
+        "authKind": ((record.get("auth") or {}).get("kind")),
+    }
+
+
+def _identity_hash(identity):
+    return hashlib.sha256(json.dumps(identity, sort_keys=True,
+                                     ensure_ascii=True).encode("utf-8")).hexdigest()
+
+
+def _current_identity(cfg, provider_id, model_id):
+    record = _record(provider_id, cfg)
+    if record is None:
+        return None
+    return _identity(provider_id, model_id, record, _setting(provider_id, cfg))
+
+
+def _team_verify(pid, model_id, cfg, project, timeout):
+    """Verify the exact model, not merely the provider.
+
+    A listing that answers proves the key; it does not prove that the approved
+    model exists there. Returns (True|False|None, message); None means the
+    provider publishes no listing, so verification needs a paid probe.
+    """
+    record, key, error = _resolve_key_for(pid, cfg, project)
+    if error:
+        return False, error
+    setting = _setting(pid, cfg)
+    return _verify_record(pid, model_id, record, setting, project, timeout)
+
+
+def _verify_record(provider_id, model_id, record, setting, project, timeout):
+    key, _source, error = cfg_mod.api_key(record, setting, project)
+    if error:
+        return False, error
+    result = model_http.list_models(_listing_record(record, setting), key,
+                                    setting.get("baseUrl"), timeout=timeout)
+    message = cfg_mod.redact(result["message"], [key] if key else [])
+    if not result.get("ok") and result.get("ids") is None:
+        return None, message  # no listing: cannot verify without spending a call
+    if not result.get("ok"):
+        return False, message
+    ids = result.get("ids") or []
+    if model_id not in ids:
+        return False, f"{model_id} is not in the provider's listing"
+    return True, message
+
+
+def cmd_team(args):
+    cfg, _ = load(args)
+    project = project_of(args)
+    action = args.team_command
+
+    if action == "scan":
+        candidates = _team_scan(args, cfg, project)
+        cfg_mod.save_team_scan(candidates, project)
+        team = cfg_mod.load_team(project)
+        if _json(args):
+            emit(json.dumps({"team": team, "candidates": candidates,
+                             "at": cfg_mod.iso()}, ensure_ascii=False, indent=2))
+            return 0
+        rows = []
+        for candidate in candidates:
+            status = ("in team" if candidate["inTeam"] else
+                      "available" if candidate["usable"] else
+                      "unusable")
+            limits = candidate.get("limits") or {}
+            limit_text = ",".join(f"{k}={v}" for k, v in limits.items()) or "-"
+            rows.append([candidate["id"], candidate["kind"], candidate["family"],
+                         "V" if candidate["vision"] else "-",
+                         candidate.get("contextWindow") or "-",
+                         limit_text,
+                         "verified" if candidate["verified"] else "unverified",
+                         status, str(candidate.get("reason") or "")[:40]])
+        if rows:
+            _table(rows, ["candidate", "kind", "family", "V", "ctx", "limits",
+                          "health", "state", "note"])
+        else:
+            emit("no candidate found: configure a provider, start a local server, or "
+                 "export a provider API key")
+        emit("")
+        emit("Ask the user which candidates may join this task, then run:")
+        emit("  models.py team add <id...>      # approved")
+        emit("  models.py team decline <id...>  # declined")
+        return 0
+
+    if action == "show":
+        team = cfg_mod.load_team(project)
+        if _json(args):
+            emit(json.dumps(team, ensure_ascii=False, indent=2))
+            return 0
+        if team is None:
+            emit("no task team formed: every configured HTTP provider currently takes "
+                 "part (backward-compatible mode)")
+            return 0
+        emit("task team:")
+        for entry_id, row in sorted((team.get("added") or {}).items()):
+            emit(f"  + {entry_id}  ({row.get('source', '?')}, "
+                 f"{'verified' if row.get('verified') else 'unverified'})")
+        for entry_id, row in sorted((team.get("declined") or {}).items()):
+            emit(f"  - {entry_id}  (declined)")
+        return 0
+
+    if action == "clear":
+        path = cfg_mod.paths(project)["team"]
+        for target in (path, cfg_mod.paths(project)["team_scan"]):
+            try:
+                os.remove(target)
+            except FileNotFoundError:
+                pass
+        emit("task team cleared: configured providers take part again "
+             "(backward-compatible mode)")
+        return 0
+
+    targets = [t.strip() for t in (args.targets or []) if t.strip()]
+    if not targets:
+        return fail("team add/decline needs at least one candidate id", 2)
+    scanned = {row["id"]: row for row in cfg_mod.load_team_scan(project)}
+    entries = model_route.catalog(cfg, model_state(project), project)
+
+    if action == "add":
+        expanded = []
+        for target in targets:
+            if "/" not in target and target in (cfg.get("providers") or {}):
+                provider_entries = [entry["id"] for entry in entries
+                                    if entry["provider"] == target]
+                expanded.extend(provider_entries or [target])
+            else:
+                expanded.append(target)
+        targets = expanded
+
+    if action == "decline":
+        def decline(team):
+            for target in targets:
+                team.setdefault("declined", {})[target] = {"at": cfg_mod.iso()}
+                team.setdefault("added", {}).pop(target, None)
+        cfg_mod.update_team(project, decline)
+        emit(f"declined for this task: {', '.join(targets)}")
+        _log_change(project, f"team decline {', '.join(targets)}")
+        return 0
+
+    added, refused = [], []
+    for target in targets:
+        provider_id = target if "/" not in target else target.split("/", 1)[0]
+        entry = model_route.find(entries, target)
+        candidate = scanned.get(target)
+        if candidate is None:
+            refused.append((target, "not in the last scan; run `models.py team scan` and "
+                                    "ask the user again"))
+            continue
+        if entry is not None and entry.get("protectedFamily") and \
+                not entry.get("allowProtectedFamily"):
+            refused.append((target, "protected family over HTTP; set "
+                                    "allowProtectedFamily deliberately"))
+            continue
+        add_spec = candidate.get("add")
+        spec_setting = {"baseUrl": (add_spec or {}).get("baseUrl"),
+                        "modelsUrl": (add_spec or {}).get("modelsUrl"),
+                        "chatUrl": (add_spec or {}).get("chatUrl"),
+                        "chatPath": (add_spec or {}).get("chatPath"),
+                        "allowProtectedFamily": (add_spec or {}).get("allowProtectedFamily")}
+        spec_record = {"id": provider_id, "name": provider_id, "category": "custom",
+                       "format": (add_spec or {}).get("format"),
+                       "auth": (add_spec or {}).get("auth"),
+                       "baseUrl": (add_spec or {}).get("baseUrl"),
+                       "modelsUrl": (add_spec or {}).get("modelsUrl"),
+                       "chatUrl": (add_spec or {}).get("chatUrl"),
+                       "chatPath": (add_spec or {}).get("chatPath")}
+        if add_spec:
+            spec_family = registry.family_info(provider_id, spec_record,
+                                               candidate["model"])["family"]
+            if spec_family in ("openai", "deepseek") and \
+                    not spec_setting.get("allowProtectedFamily"):
+                refused.append((target, f"protected family {spec_family!r} over HTTP; "
+                                        f"set allowProtectedFamily deliberately"))
+                continue
+
+        expected = candidate.get("fingerprint")
+        if not isinstance(expected, str) or len(expected) != 64:
+            refused.append((target, "the scan cache has no usable fingerprint; run "
+                                    "`models.py team scan` again and ask the user"))
+            continue
+        current = _current_identity(cfg, provider_id, candidate["model"])
+        if current is None:
+            current = _identity(provider_id, candidate["model"], spec_record,
+                                spec_setting)
+        if _identity_hash(current) != expected:
+            refused.append((target, "the provider configuration changed since the last "
+                                    "scan; rescan and ask the user again"))
+            continue
+
+        if add_spec and provider_id not in (cfg.get("providers") or {}):
+            # Verify against a transient record BEFORE persisting anything: a failed
+            # add must not leave a configured-but-unapproved provider behind.
+            verify, message = _verify_record(provider_id, candidate["model"],
+                                             spec_record, spec_setting, project,
+                                             args.timeout)
+            if verify is False:
+                refused.append((target, message))
+                continue
+            if verify is None and not args.allow_unverified:
+                refused.append((target, f"{message}; run `models.py test {provider_id} "
+                                        f"--generate` first, or pass --allow-unverified"))
+                continue
+            setting = {"enabled": True, "baseUrl": add_spec.get("baseUrl"),
+                       "format": add_spec.get("format"), "auth": add_spec.get("auth"),
+                       "models": add_spec.get("models"),
+                       "modelsUrl": add_spec.get("modelsUrl"),
+                       "chatUrl": add_spec.get("chatUrl"),
+                       "chatPath": add_spec.get("chatPath")}
+            _write_provider(args, provider_id, setting, args.scope)
+            cfg, _ = load(args)
+            emit(f"configured {provider_id} from the scan")
+            current = _current_identity(cfg, provider_id, candidate["model"])
+            if current is None or _identity_hash(current) != expected:
+                refused.append((target, "the configured provider does not match the "
+                                        "approved scan; inspect _work/models/config.json"))
+                continue
+        else:
+            verify, message = _team_verify(provider_id, candidate["model"], cfg, project,
+                                           args.timeout)
+            if verify is False:
+                refused.append((target, message))
+                continue
+            if verify is None and not args.allow_unverified:
+                refused.append((target, f"{message}; run `models.py test {provider_id} "
+                                        f"--generate` first, or pass --allow-unverified"))
+                continue
+        verified = bool(verify)
+
+        def add(team, target=target, provider_id=provider_id, verified=verified):
+            team.setdefault("added", {})[target] = {
+                "at": cfg_mod.iso(),
+                "source": candidate.get("kind", "configured"),
+                "verified": verified,
+                "provider": provider_id,
+                "fingerprint": expected,
+            }
+            team.setdefault("declined", {}).pop(target, None)
+
+        cfg_mod.update_team(project, add)
+        if verified:
+            cfg_mod.mutate(project, lambda state, pid=provider_id, msg=message:
+                           cfg_mod.mark_probe(state, pid, True, msg))
+        added.append((target, verified, message))
+
+    for target, verified, message in added:
+        emit(f"added {target}  ({'verified' if verified else 'unverified'}; {message})")
+    for target, why in refused:
+        emit(f"refused {target}: {why}")
+    if added:
+        _log_change(project, f"team add {', '.join(t for t, _, _ in added)}")
+        emit("")
+        emit("Only the approved candidates now take part; `models.py team show` lists "
+             "the team, `team clear` restores the all-configured mode.")
+    return 0 if not refused else 1
+
+
 # --------------------------------------------------------------------------- discovery / probes
-def _resolve_key(pid, cfg, args):
+def _resolve_key_for(pid, cfg, project):
     record = _record(pid, cfg)
     if record is None:
         return None, None, f"unknown provider {pid!r}"
     setting = _setting(pid, cfg)
-    key, source, error = cfg_mod.api_key(record, setting, project_of(args))
+    key, source, error = cfg_mod.api_key(record, setting, project)
     kind = (record.get("auth") or {}).get("kind")
     if error:
         return record, None, error
@@ -616,6 +1015,10 @@ def _resolve_key(pid, cfg, args):
                               f"or set {env}" if env else
                               f"no credential for {pid}: `models.py key set {pid}`")
     return record, key, None
+
+
+def _resolve_key(pid, cfg, args):
+    return _resolve_key_for(pid, cfg, project_of(args))
 
 
 def _listing_record(record, setting):
@@ -690,10 +1093,21 @@ def cmd_test(args):
                         f"({entry.get('reason')})", 2)
         if not entry.get("usable") and "protected family" in str(entry.get("reason")):
             return fail(f"{target!r} is not usable: {entry.get('reason')}", 2)
+        if entry.get("inTeam") is False:
+            # A probe contacts the provider and writes health; an unapproved agent
+            # must not be touched before the user adds it.
+            return fail(f"{target!r} is not in this task's team; ask the user, then "
+                        f"`models.py team add {target}` first", 2)
         pid = entry["provider"]
         model_id = entry["model"]
     elif target in (cfg.get("providers") or {}) or registry.provider(target):
-        pid, model_id = target, None
+        team = cfg_mod.load_team(project)
+        approved = [row for row in entries
+                    if row["provider"] == target and row.get("inTeam") is not False]
+        if team is not None and not approved:
+            return fail(f"{target!r} has no approved model in this task's team; ask the "
+                        f"user and `models.py team add <id>` first", 2)
+        pid, model_id = target, (approved[0]["model"] if approved else None)
     else:
         return fail(f"{target!r} is neither a catalog model nor a configured provider", 2)
 
@@ -1470,6 +1884,18 @@ def build_parser():
             "vendor-mediated account login / status / logout (no password handled here)")
     p.add_argument("account_command", choices=("login", "status", "logout", "list"))
     p.add_argument("provider", nargs="?", default="")
+
+    p = add("team", cmd_team,
+            "scan available agents, then form the task team the user approved")
+    p.add_argument("team_command", choices=("scan", "add", "decline", "show", "clear"))
+    p.add_argument("targets", nargs="*", default=[])
+    p.add_argument("--detect", action="append", default=[],
+                   help="an extra local OpenAI-compatible base URL to probe")
+    p.add_argument("--no-local", action="store_true",
+                   help="do not probe the common local ports")
+    p.add_argument("--allow-unverified", action="store_true",
+                   help="approve a provider that publishes no model listing")
+    p.add_argument("--timeout", type=int, default=5)
 
     p = add("list", cmd_list, "the project's model catalog with availability")
     p.add_argument("--provider")

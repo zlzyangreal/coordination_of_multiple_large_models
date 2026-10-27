@@ -120,6 +120,8 @@ def catalog(cfg, state, project="."):
     entries = []
     store = cfg_mod.load_credentials(project)
     lanes = cfg.get("lanes") or {}
+    team = cfg_mod.load_team(project)
+    members = set((team or {}).get("added") or {}) if team else None
 
     for lane in ("codex", "dsh"):
         lane_cfg = lanes.get(lane) or {}
@@ -144,6 +146,7 @@ def catalog(cfg, state, project="."):
                 "configured": enabled,
                 "usable": enabled,
                 "reason": None if enabled else f"lane {lane!r} is disabled",
+                "inTeam": True,
                 "capabilities": {
                     "vision": lane == "codex",
                     "reasoning": True,
@@ -209,6 +212,11 @@ def catalog(cfg, state, project="."):
             if isinstance(override.get("family"), str) and override["family"].strip():
                 family, family_known, family_source = override["family"].strip(), True, "config"
             reason = blocked
+            entry_id = f"{pid}/{model_id}"
+            in_team = members is None or entry_id in members
+            if reason is None and not in_team:
+                reason = ("not in this task's team; run `models.py team scan` and approve "
+                          "it with `models.py team add <id>` (or `team decline <id>`)")
             if reason is None and protected_family and not allow_protected:
                 reason = (f"protected family {inferred['family']!r}: use the "
                           f"{'codex' if inferred['family'] == 'openai' else 'dsh'} lane, "
@@ -226,6 +234,7 @@ def catalog(cfg, state, project="."):
                 "lane": "http",
                 "provider": pid,
                 "model": model_id,
+                "inTeam": in_team,
                 "family": family,
                 "familyKnown": family_known,
                 "familySource": family_source,
