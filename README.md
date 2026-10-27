@@ -3,7 +3,7 @@
 用于 **2 个及以上大模型协作** 的调度与对接：谁负责、怎么交接、评审结论怎么判断可信、出错怎么退。只管协作机制——代码、文档、数据、方案都适用；代码风格、写作、排版这些领域规则属于项目自己的事实包与 DoD，不写进这里。
 
 - 仓库：<https://github.com/zlzyangreal/coordination_of_multiple_large_models>
-- 版本：2.0.0（2026-10-27）
+- 版本：2.1.0（2026-10-27）
 - 本版为**大版本**：接入 [dsh-our-free-model](https://github.com/Ebony-Vinyl/dsh-our-free-model) 的多渠道模型能力（76 家注册表、三线协议、账号/API Key/自定义地址/本地模型），并新增"任务开始扫清单、用户同意才入队"的团队审批流程；原有 dsh + codex 两条保护通道不变。
 - 上一代：`多模型协作Spec.md` v2.4.1，已冻结，仅作留档
 
@@ -106,6 +106,8 @@ python scripts/models.py add-custom my_gw --base-url https://llm.internal/v1 \
     --models internal-chat-1 --format openai-chat --auth apiKey
 python scripts/models.py list                 # 清单 + 可用性（不可用会写原因）
 python scripts/models.py test deepseek        # 验活（列表探测；--generate 才花一次生成）
+python scripts/models.py route --role plan            # 谁最适合做方案设计（推理/设计/Agentic/编程评分）
+python scripts/models.py plan --requirements req.md  # 生成可执行开发方案（不负责分发）
 python scripts/models.py use review codex:auto        # 按角色切换（项目级）
 python scripts/models.py route --role review --producer codex:auto   # 选主 + 回退链
 python scripts/models.py chains set review-safe \
@@ -136,6 +138,7 @@ python scripts/models.py health | budget | doctor
   家族，家族不明的聚合行默认不能当独立评审（`--allow-unknown-family` 可显式承担风险）。
 - **额度与预算**：HTTP 提供商可在配置里写 `limits.callsPerDay/tokensPerDay`，`models.py budget`
   对照本地计数；没配额度就按"未知"处理，不会当成无限。GPT 仍看 `quota.py` 的 5h/周额度。
+- **方案设计 ≠ 任务分发**：`plan` 角色按 **Reasoning / Design / Agentic / Coding** 四项评分选模型（可在 `overrides.<model>.scores` 调整），由它独立理解需求、调研技术、对比开源、设计架构、选技术栈并产出可执行方案；**它不给模型分配任务**，方案先过独立评审，再由 lead（dispatcher）拆任务、定 owner。`models.py plan --requirements req.md` 产出 `_work/plan/plan.md` 和 `planner.json`。
 - **入队要问**：任务开始先 `team scan`，把可用候选（配置内、本机服务、已设环境变量 Key 的平台）列给用户；同意才 `team add`，不同意 `team decline`。没有 `team.json` 时保持旧行为（配置了就能用）；建队后未入队的 HTTP 渠道默认不参与，dsh/codex 两条保护通道不受影响。
 - **账号登录**：`account login/status/logout/list` 把登录委托给厂商 CLI（`loginArgv`），skill 只记录登录态、登出时清掉已存令牌；调用仍用 `credential` 取令牌，不保存密码。
 - **边界**：浏览器 OAuth 登录流、以及需要动态会话 id + 专属请求头的匿名免费车道（参考项目的
@@ -199,7 +202,7 @@ python scripts/models.py team add anthropic/claude-sonnet-4-20250514 --allow-unv
 
 离线自测（不联网、不花钱）：`python scripts/selftest_models.py`，覆盖三线协议、429 回退、
 400 不回退、凭据脱敏、模型级冷却、精确 pin、家族独立性、跨进程状态锁、受保护家族直连拦截、
-凭据命令延迟执行、codex 委托的 cwd 与空响应等 136 项。
+凭据命令延迟执行、codex 委托的 cwd 与空响应等 152 项。
 
 补充两条容易踩的边界：HTTP 提供商配置好即可用于普通调用，但**未验证（没跑过 `test` 或成功
 调用）时不会进入 `review` 角色**——评审门不做"尽力而为"；`add`/`use`/`remove` 会写
@@ -273,20 +276,23 @@ python scripts/quota.py --note "交稿前"                  # 往 _work/quota_le
 | 事实包把"规模上限"当硬约束审（页数、行数、PR 大小都是预算） | 事实包拆 `constraints`（违反即返工）与 `budgets`（超限只报 `notice`，不得作否决理由）；模板 `assets/facts-pack.example.md` |
 | 同一模型的草稿由它自己放行 | advisory draft 计入生产：对应 finding 标 `origin: advisory-derived`，不计入独立评审；只有单模型可用时，交付必须写"本轮评审非独立（同源）" |
 | 额度读取与台账没有执行点 | "一次 runner 调用 = 一批"；runner 每次自动写一行 `_work/quota_ledger.md`；每条用户消息读一次 live 额度 |
-| SKILL 可在会话内静默失效 | 每轮首行状态行：`SKILL v2.0.0 (pinned 19:36) \| quota 5h 78% / week 96% \| 阶段：…`；中断当场声明并补门；复盘固定问"本轮 skill 是否中断" |
+| SKILL 可在会话内静默失效 | 每轮首行状态行：`SKILL v2.1.0 (pinned 19:36) \| quota 5h 78% / week 96% \| 阶段：…`；中断当场声明并补门；复盘固定问"本轮 skill 是否中断" |
 | 证据没绑定到实际被读的东西 | 评审实际读的派生件（diff / dump / 导出）在调用前立即生成，`build_envelope.py --review-input` 把 sha256(8)+mtime 记进 `_work/rounds.md`；未记录前交付不得声称"版本已绑定"（信封结构按决议暂不动） |
 
 一句话：v1.4.0 解决"怎么调用"，v1.5.0 解决"调用了算不算数"，v1.6.0 解决"换到代码/数据/方案也成立"。
 
 ## 怎么用
 
-1. 开工：`python scripts/session.py pin`（锁契约版本）+ `python scripts/check_env.py --short-call`（确认出口，顺带打一行实时额度）。
+1. 开工：`python scripts/session.py pin`（锁契约版本）+ `python scripts/check_env.py --short-call`（确认出口，顺带打一行实时额度）+ `python scripts/models.py team scan`（把可用 Agent 列给用户，确认后才入队）。
 2. 每轮：首行 `python scripts/session.py status --stage <阶段>`；变了就跑 `session.py check`，记偏差但不切版本。
-3. 分工前：`python scripts/quota.py`，照它给的档位决定"谁生产、GPT 做什么、怎么拆调用"。
-4. 评审前：`python scripts/build_envelope.py --artifact <文件或目录> --out <yaml> --ledger <台账> --unit "api::src/api.py:40-90::handle_request"`，第一轮加 `--init-ledger`。
-5. 调用：`python scripts/run_gpt.py --prompt-file <brief> --request-id <编号> --sandbox read-only --schema assets/result.schema.json --envelope <yaml> --output <payload> --result-path <结果>`，不合 schema 会 exit 3。
-6. 收结论：`python scripts/validate_result.py --result <结果> --envelope <yaml>` 通过后再逐条回源验证，采纳/拒绝写进台账（被拒条目下轮自动进 `prior_findings`）。
-7. 结束：回报额度用量、调用统计、偏差、未闭环项，并回答"本轮 skill 是否中断"；临时文件清掉，快照每文件最多留 3 份。
+3. 方案设计：`python scripts/models.py route --role plan` 看谁最适合（推理/设计/Agentic/编程评分），再 `python scripts/models.py plan --requirements <需求>` 产出 `_work/plan/plan.md`；**planner 不负责分任务**。
+4. 方案评审：把 `plan.md` 当作工件走独立评审门（`build_envelope.py` + `run_gpt.py`，或 `models.py call --role review --producer <planner>`），必须换一个家族审；审不过就返工方案。
+5. 任务分发：lead（dispatcher）根据已评审的方案建任务板、定 owner、拆调用；planner 不参与分配。
+6. 分工前：`python scripts/quota.py`，照它给的档位决定"谁生产、GPT 做什么、怎么拆调用"。
+7. 评审前：`python scripts/build_envelope.py --artifact <文件或目录> --out <yaml> --ledger <台账> --unit "api::src/api.py:40-90::handle_request"`，第一轮加 `--init-ledger`。
+8. 调用：`python scripts/run_gpt.py --prompt-file <brief> --request-id <编号> --sandbox read-only --schema assets/result.schema.json --envelope <yaml> --output <payload> --result-path <结果>`，不合 schema 会 exit 3。
+9. 收结论：`python scripts/validate_result.py --result <结果> --envelope <yaml>` 通过后再逐条回源验证，采纳/拒绝写进台账（被拒条目下轮自动进 `prior_findings`）。
+10. 结束：回报额度用量、调用统计、偏差、未闭环项，并回答"本轮 skill 是否中断"；临时文件清掉，快照每文件最多留 3 份。
 
 ## 维护约定
 
@@ -299,6 +305,7 @@ python scripts/quota.py --note "交稿前"                  # 往 _work/quota_le
 
 | 版本 | 日期 | 变更 |
 |---|---|---|
+| 2.1.0 | 2026-10-27 | 方案设计与任务分发分离：新增 `plan` 角色与 `models.py plan`，按 Reasoning/Design/Agentic/Coding 评分选 planner（可在 `overrides.<model>.scores` 覆盖），先独立评审方案再由 lead 分发；`call --role plan` 拒绝；dsh planner 由会话自己写；152 项离线自测 |
 | 2.0.0 | 2026-10-27 | 大版本：接入 dsh-our-free-model 的多渠道模型能力，并加入任务团队入队审批。多平台模型接入与统一管理：新增 `scripts/models.py`（init/providers/add/key/account/list/discover/test/use/route/chains/call/health/budget/doctor）、`model_registry.py`（内置 76 家提供商注册表 + id 语法）、`model_config.py`（项目级配置、0600 凭据库、状态与跨进程锁、脱敏）、`model_http.py`（chat/responses/messages 三线协议、失败分类）、`model_route.py`（清单、能力/额度/健康路由、家族独立性、降级链）与 `selftest_models.py`（136 项离线自测）；GPT 仍只走 `run_gpt.py`、DeepSeek 仍只走 dsh 会话，HTTP 直连这两族需显式 `allowProtectedFamily`；凭据按项目隔离、只读命令不执行取令牌命令；新增 `references/model-access.md`、`assets/providers.registry.json`（MIT，附 NOTICE）与 `assets/models.config.example.json`；任务开始先 `team scan` 经用户同意才入队（`team.json` 存在即开关）；SKILL 增加第 17~20 条硬规则 |
 | 1.6.0 | 2026-10-24 | 去特化：评审单元由"页"改为通用 `units`（文件 / 片段 / diff / 接口 / 单元格 / 页……），`page_map`/`pages_seen`/`title_confirmed` 改为 `units`/`units_seen`/`units_confirmed`；目录工件改用树哈希；DoD、事实包、环境、清理里的文档/排版专用表述移除；schema 强制与零写盘不变 |
 | 1.5.0 | 2026-10-24 | 修第二份反馈单 BUG-1~9：评审零写盘（`artifact_access`/`result_capture`）、契约 pin 与漂移（`session.py`）、评审强制 schema 并在 runner 内校验（exit 3，另加 `validate_result.py`）、信封必填 `prior_findings` 由台账生成、事实包拆 constraints/budgets、advisory draft 计入生产（`origin`）、每消息读额度 + runner 自动台账、每轮状态行与中断声明；新增 `schema_for_codex.py`（codex strict 模式派生）与 `assets/facts-pack.example.md` |

@@ -53,6 +53,7 @@ DEFAULT_CONFIG = {
     },
     "roles": {
         "lead": {"model": "dsh:auto"},
+        "plan": {"model": "auto"},
         "produce": {"model": "auto"},
         "review": {"model": "codex:auto"},
         "vision": {"model": "codex:auto"},
@@ -68,7 +69,7 @@ DEFAULT_CONFIG = {
     },
 }
 
-ROLE_NAMES = ("lead", "produce", "review", "vision", "mechanical")
+ROLE_NAMES = ("lead", "plan", "produce", "review", "vision", "mechanical")
 
 
 # --------------------------------------------------------------------------- paths

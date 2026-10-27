@@ -48,7 +48,7 @@ if hasattr(sys.stdout, "reconfigure"):
 if hasattr(sys.stderr, "reconfigure"):
     sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
-SKILL_VERSION = "2.0.0"
+SKILL_VERSION = "2.1.0"
 
 #: Failures that must move to the next link instead of retrying the same one.
 #: Retrying a 429 or an auth refusal spends a call to learn the same thing.
@@ -637,6 +637,7 @@ def _team_scan(args, cfg, project):
             "reason": entry.get("reason"),
             "inTeam": bool(team) and entry.get("inTeam"),
             "verified": health["status"] == "ok",
+            "planning": entry.get("planning"),
             "fingerprint": _identity_hash(_identity(entry["provider"], entry["model"],
                                                     record, setting)) if record else None,
         })
@@ -809,15 +810,19 @@ def cmd_team(args):
                       "unusable")
             limits = candidate.get("limits") or {}
             limit_text = ",".join(f"{k}={v}" for k, v in limits.items()) or "-"
+            planning = candidate.get("planning") or {}
+            plan_text = (f"{planning.get('reasoning')}/{planning.get('design')}/"
+                         f"{planning.get('agentic')}/{planning.get('coding')}"
+                         if planning else "-")
             rows.append([candidate["id"], candidate["kind"], candidate["family"],
                          "V" if candidate["vision"] else "-",
                          candidate.get("contextWindow") or "-",
-                         limit_text,
+                         limit_text, plan_text,
                          "verified" if candidate["verified"] else "unverified",
                          status, str(candidate.get("reason") or "")[:40]])
         if rows:
             _table(rows, ["candidate", "kind", "family", "V", "ctx", "limits",
-                          "health", "state", "note"])
+                          "plan r/d/a/c", "health", "state", "note"])
         else:
             emit("no candidate found: configure a provider, start a local server, or "
                  "export a provider API key")
@@ -1251,6 +1256,12 @@ def cmd_route(args):
              f"({quota.get('source') or 'no reading'})")
     emit(f"role {plan['role']}  primary  {plan['primary']['id']}  "
          f"[{plan['primary']['lane']}]")
+    scores = plan["primary"].get("planning") or {}
+    if plan["role"] == "plan" and scores:
+        emit(f"planner scores  reasoning={scores.get('reasoning')} "
+             f"design={scores.get('design')} agentic={scores.get('agentic')} "
+             f"coding={scores.get('coding')}  weighted={scores.get('weighted')} "
+             f"({scores.get('source')})")
     for entry in plan["fallback"]:
         emit(f"                  fallback {entry['id']}  [{entry['lane']}]")
     for note in plan["notes"]:
@@ -1359,7 +1370,6 @@ def _codex_call(args, entry, prompt, project, request_id, request_path):
         return fail(f"runner missing: {run_gpt}", 2), None
     models_dir = cfg_mod.paths(project)["models_dir"]
     out_dir = os.path.join(models_dir, "out")
-    os.makedirs(out_dir, exist_ok=True)
     payload = os.path.join(out_dir, f"{request_id}.txt")
     cmd = [sys.executable, run_gpt, "--prompt-file", request_path, "--cd", project,
            "--sandbox", args.sandbox or "read-only",
@@ -1375,6 +1385,7 @@ def _codex_call(args, entry, prompt, project, request_id, request_path):
     if args.dry_run:
         emit("[dry-run] " + " ".join(cmd))
         return 0, None
+    os.makedirs(out_dir, exist_ok=True)
     # cwd=project makes every relative default inside run_gpt.py land in the
     # selected project, not in whatever directory the caller happened to be in.
     done = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8",
@@ -1512,6 +1523,249 @@ def _http_call(args, entry, prompt, cfg, project, request_id, attempts):
                      else "every attempt failed")
 
 
+PLANNING_SYSTEM = (
+    "You are the planning agent for a multi-model software project. You are NOT the "
+    "dispatcher: do not assign work to models and do not start implementation. Your "
+    "job is to independently understand the requirement, inspect the repository, "
+    "research the relevant technology and open-source options, compare trade-offs, "
+    "design the architecture, choose a stack, and produce an executable plan with "
+    "milestones, acceptance criteria, risks and suggested work packages (without "
+    "owners). Be concrete about files, interfaces and verification. Return markdown; "
+    "write no files.")
+
+
+CONTEXT_SKIP_DIRS = {".git", "_work", "__pycache__", "node_modules", ".venv", "venv",
+                     ".idea", ".mypy_cache", ".pytest_cache", "dist", "build"}
+CONTEXT_SKIP_NAMES = {"credentials.json", ".env", ".env.local", "id_rsa", "id_ed25519"}
+CONTEXT_EXTS = {".md", ".py", ".js", ".ts", ".tsx", ".jsx", ".json", ".toml", ".yml",
+                ".yaml", ".txt", ".ps1", ".sh", ".go", ".rs", ".java", ".cs", ".sql"}
+
+
+def _repo_context(project, max_files=12, max_chars=40000):
+    """A bounded, secret-free snapshot for planners that cannot read the repo.
+
+    HTTP planners have no tools: without this they plan from the requirement alone.
+    The snapshot lists the tree and embeds a few small text files; it skips VCS,
+    `_work`, dependency dirs and credential-looking filenames. Codex planners can
+    read the repo themselves, but the same snapshot does no harm.
+    """
+    files = []
+    for dirpath, dirnames, names in os.walk(project):
+        dirnames[:] = sorted(d for d in dirnames
+                             if d not in CONTEXT_SKIP_DIRS and not d.startswith("."))
+        for name in sorted(names):
+            if name in CONTEXT_SKIP_NAMES or name.endswith((".key", ".pem", ".pfx")):
+                continue
+            path = os.path.join(dirpath, name)
+            try:
+                size = os.path.getsize(path)
+            except OSError:
+                continue
+            if size > 200_000:
+                continue
+            files.append((os.path.relpath(path, project).replace(os.sep, "/"), size))
+    manifest = "\n".join(f"- {rel}" for rel, _size in files[:300])
+
+    priority = ["README.md", "SKILL.md", "pyproject.toml", "package.json",
+                "requirements.txt", "scripts/models.py", "src/main.py", "main.py"]
+    chosen = []
+    for rel in priority:
+        if any(rel == name for name, _size in files) and rel not in chosen:
+            chosen.append(rel)
+    for rel, size in sorted(files, key=lambda item: item[1]):
+        if len(chosen) >= max_files:
+            break
+        if rel in chosen or os.path.splitext(rel)[1].lower() not in CONTEXT_EXTS:
+            continue
+        chosen.append(rel)
+
+    excerpts = []
+    budget = max_chars
+    for rel in chosen:
+        path = os.path.join(project, rel)
+        try:
+            with open(path, encoding="utf-8", errors="replace") as fh:
+                text = fh.read(6000)
+        except OSError:
+            continue
+        snippet = f"### {rel}\n```\n{text.rstrip()}\n```\n"
+        if len(snippet) > budget:
+            break
+        excerpts.append(snippet)
+        budget -= len(snippet)
+    return manifest, "\n".join(excerpts)
+
+
+def _plan_prompt(requirements, project, planner_id, context=None):
+    manifest, excerpts = context or ("", "")
+    return f"""{PLANNING_SYSTEM}
+
+Project root: {project}
+Planner: {planner_id}
+
+## Requirement (verbatim)
+
+{requirements.strip()}
+
+## Repository snapshot (bounded; secrets and _work excluded)
+
+### Files
+
+{manifest or "(empty project)"}
+
+### Excerpts
+
+{excerpts or "(no text excerpts; inspect the repository if you can)"}
+
+## Deliverable
+
+A markdown plan with these sections:
+
+1. Requirement analysis: what is asked, what is ambiguous, what must be confirmed.
+2. Research: repository map (entry points, modules, tests, risky areas), comparable
+   open-source projects and what to reuse, with trade-offs.
+3. Architecture: components, data flow, interfaces/contracts, failure behaviour.
+4. Technology stack: chosen stack and rejected alternatives with reasons.
+5. Milestones: ordered, each with a verifiable acceptance criterion.
+6. Risks: what can break, how it is detected, the fallback.
+7. Suggested work packages (no model assignment; the dispatcher assigns).
+
+Use the snapshot above; if a fact is missing, name the file you would need instead of
+inventing it. Do not write files. Do not start implementation. Mark unknowns `pending`.
+"""
+
+
+def cmd_plan(args):
+    cfg, _ = load(args)
+    project = project_of(args)
+    state = cfg_mod.load_state(project)
+    if args.requirements:
+        with open(args.requirements, encoding="utf-8-sig") as fh:
+            requirements = fh.read()
+    else:
+        requirements = args.requirements_text or ""
+    if not requirements.strip():
+        return fail("pass --requirements <file> or --requirements-text", 2)
+
+    entries = model_route.catalog(cfg, state, project)
+    fallback = []
+    notes = []
+    if args.planner:
+        planner = model_route.find(entries, args.planner)
+        if planner is None:
+            return fail(f"{args.planner!r} is not in the catalog", 2)
+        if not planner.get("usable"):
+            return fail(f"{args.planner!r} is not usable: {planner.get('reason')}", 2)
+    else:
+        try:
+            plan = model_route.route(cfg, state, "plan", project=project,
+                                     read_quota=not args.no_quota)
+        except model_route.RouteError as exc:
+            return fail(str(exc), 3)
+        planner = plan["primary"]
+        fallback = plan["fallback"]
+        notes = plan["notes"]
+
+    plan_dir = os.path.join(project, "_work", "plan")
+    requests_dir = os.path.join(plan_dir, "requests")
+    os.makedirs(requests_dir, exist_ok=True)
+    request_id = args.request_id or _request_id()
+    request_path = os.path.join(requests_dir, f"{request_id}.md")
+    context = _repo_context(project)
+    prompt = _plan_prompt(requirements, project, planner["id"], context)
+    with open(request_path, "w", encoding="utf-8") as fh:
+        fh.write(prompt)
+    scores = planner.get("planning") or {}
+    if not _json(args):
+        for note in notes:
+            emit(f"note: {note}")
+        emit(f"planner: {planner['id']}  scores r={scores.get('reasoning')} "
+             f"d={scores.get('design')} a={scores.get('agentic')} "
+             f"c={scores.get('coding')} (weighted {scores.get('weighted')})")
+
+    if planner["lane"] == "dsh":
+        emit("the planner is the lead session itself; models.py cannot spawn it.")
+        emit(f"brief written: {request_path}")
+        emit("Draft the plan in the session, then run the review gate on the plan file.")
+        return 2
+
+    if args.dry_run:
+        if planner["lane"] == "codex":
+            _codex_call(args, planner, prompt, project, request_id, request_path)
+        else:
+            record = _record(planner["provider"], cfg)
+            setting = _setting(planner["provider"], cfg)
+            emit(f"[dry-run] POST {registry.chat_url(record, setting.get('baseUrl'))} "
+                 f"model={planner['model']} format={record.get('format')}")
+        return 0
+
+    attempts = []
+    final = None
+    produced_by = None
+    for entry in [planner] + fallback:
+        if entry["lane"] == "dsh":
+            continue
+        if entry["lane"] == "codex":
+            status, result = _codex_call(args, entry, prompt, project, request_id,
+                                         request_path)
+            attempts.append({"model": entry["id"], "lane": "codex",
+                             "outcome": "ok" if status == 0 else "failed",
+                             "exit": status})
+            if status == 0:
+                final = {"text": result["text"], "model": entry["id"],
+                         "usage": result.get("usage"), "lane": "codex"}
+                produced_by = entry
+                break
+            continue
+        status, answer, message = _http_call(args, entry, prompt, cfg, project,
+                                             request_id, attempts)
+        if status == 0:
+            final = {"text": answer["text"], "model": entry["id"],
+                     "usage": answer.get("usage"), "lane": "http"}
+            produced_by = entry
+            break
+        if status == 4:
+            emit(f"plan failed with a request-scoped defect at {entry['id']}: {message}")
+            return 4
+    if final is None:
+        emit("plan failed: no planner produced a plan")
+        for attempt in attempts:
+            emit(f"  {attempt.get('model')}: {attempt.get('outcome')} "
+                 f"{attempt.get('kind') or ''}"
+                 f"{(': ' + attempt['message']) if attempt.get('message') else ''}")
+        return 5
+
+    produced_scores = produced_by.get("planning") if produced_by else scores
+    output = os.path.abspath(args.output or os.path.join(plan_dir, "plan.md"))
+    os.makedirs(os.path.dirname(output) or ".", exist_ok=True)
+    with open(output, "w", encoding="utf-8", newline="\n") as fh:
+        fh.write(final["text"].rstrip() + "\n")
+    record = {
+        "requestId": request_id,
+        "planner": final["model"],
+        "scores": produced_scores,
+        "selectedPlanner": planner["id"],
+        "selectedScores": scores,
+        "output": output,
+        "request": request_path,
+        "lane": final["lane"],
+        "model": final["model"],
+        "usage": final.get("usage"),
+        "attempts": attempts,
+        "at": cfg_mod.iso(),
+    }
+    with open(os.path.join(plan_dir, "planner.json"), "w", encoding="utf-8") as fh:
+        json.dump(record, fh, ensure_ascii=False, indent=2)
+    _log_change(project, f"plan {final['model']} -> {output}")
+    if _json(args):
+        emit(json.dumps(record, ensure_ascii=False, indent=2))
+    else:
+        emit(f"plan written: {output}")
+        emit(f"next: review the plan with a different-family model before dispatch "
+             f"(`models.py call --role review --producer {final['model']}`)")
+    return 0
+
+
 def cmd_call(args):
     cfg, _ = load(args)
     project = project_of(args)
@@ -1567,9 +1821,11 @@ def cmd_call(args):
 
     # The lead role is the session, not a callable model: a script must not
     # produce as the lead (and must not substitute codex for it silently).
-    if args.role in ("lead", "mechanical"):
-        return fail(f"role {args.role!r} is the lead session itself; models.py does not "
-                    f"call it. Run the work in the session.", 2)
+    if args.role in ("lead", "mechanical", "plan"):
+        return fail(f"role {args.role!r} is not a generic call"
+                    + ("; use `models.py plan --requirements <file>`"
+                       if args.role == "plan" else
+                       f"; role {args.role!r} is the lead session itself"), 2)
     if args.role == "produce" and links and links[0]["lane"] == "dsh":
         return fail("the quota tier assigns production to the lead; do the work in the "
                     "session (or pin a codex/HTTP model explicitly).", 2)
@@ -1957,6 +2213,21 @@ def build_parser():
     p.add_argument("--exclude-family", dest="exclude_family", action="append", default=[])
     p.add_argument("--allow-unknown-family", dest="allow_unknown_family",
                    action="store_true")
+    p.add_argument("--no-quota", action="store_true")
+    p.add_argument("--dry-run", dest="dry_run", action="store_true")
+
+    p = add("plan", cmd_plan,
+            "planning agent: requirements -> research, architecture, stack, executable plan")
+    p.add_argument("--requirements", help="requirements file")
+    p.add_argument("--requirements-text", dest="requirements_text")
+    p.add_argument("--planner", help="pin the planning model (default: scored route)")
+    p.add_argument("--output", help="default <project>/_work/plan/plan.md")
+    p.add_argument("--system")
+    p.add_argument("--max-tokens", dest="max_tokens", type=int, default=8192)
+    p.add_argument("--timeout", type=int, default=900)
+    p.add_argument("--sandbox", choices=("read-only", "workspace-write", "danger-full-access"),
+                   default="read-only")
+    p.add_argument("--request-id", dest="request_id")
     p.add_argument("--no-quota", action="store_true")
     p.add_argument("--dry-run", dest="dry_run", action="store_true")
 

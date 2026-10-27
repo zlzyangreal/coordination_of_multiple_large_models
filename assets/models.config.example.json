@@ -5,7 +5,12 @@
     "deepseek": {
       "enabled": true,
       "models": ["deepseek-v4-pro"],
-      "_comment": "a provider from the vendored registry; `enabled` + a credential is enough. An inline apiKey is allowed but warned about."
+      "overrides": {
+        "deepseek-v4-pro": {
+          "scores": {"reasoning": 4, "design": 4, "agentic": 4, "coding": 5}
+        }
+      },
+      "_comment": "a provider from the vendored registry; `enabled` + a credential is enough. An inline apiKey is allowed but warned about. `scores` feeds route --role plan."
     },
     "ollama": {
       "enabled": true,
@@ -48,6 +53,7 @@
   },
   "roles": {
     "lead": {"model": "dsh:auto"},
+    "plan": {"model": "auto"},
     "produce": {"model": "auto"},
     "review": {"model": "codex:auto"},
     "vision": {"model": "codex:auto"},

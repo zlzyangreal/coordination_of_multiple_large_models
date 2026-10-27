@@ -36,7 +36,7 @@ from datetime import datetime, timedelta, timezone
 
 from model_registry import chat_url, headers as registry_headers, models_url
 
-USER_AGENT = "coord-multimodel/2.0 (+https://github.com/zlzyangreal/coordination_of_multiple_large_models)"
+USER_AGENT = "coord-multimodel/2.1 (+https://github.com/zlzyangreal/coordination_of_multiple_large_models)"
 READ_LIMIT = 8 * 1024 * 1024
 
 

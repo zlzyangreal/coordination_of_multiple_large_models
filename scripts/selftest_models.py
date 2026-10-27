@@ -228,6 +228,7 @@ def main():
         cases(env, project, other, port_a, port_b, port_c)
         extended_cases(env, project, port_a, port_b, port_c)
         team_cases(env, work, port_a, port_b)
+        plan_cases(env, work, port_a, port_b)
     finally:
         for server in (server_a, server_b, server_c):
             server.shutdown()
@@ -1125,6 +1126,155 @@ def team_cases(env, work, port_a, port_b):
     code, out, err = run(project, ["call", "--model", "t_a/mock-ok", "--prompt", "hi"], env)
     check("an empty team file makes an unapproved call fail", code == 2, out + err)
     os.remove(team_file)
+
+
+def plan_cases(env, work, port_a, port_b):
+    """Planner is scored and separate from the dispatcher."""
+    project = os.path.join(work, "plan-project")
+    os.makedirs(project)
+    base_a = f"http://127.0.0.1:{port_a}/v1"
+    base_b = f"http://127.0.0.1:{port_b}/v1"
+    config_path = os.path.join(project, "_work", "models", "config.json")
+    requirements = os.path.join(project, "requirements.md")
+    with open(requirements, "w", encoding="utf-8") as fh:
+        fh.write("Add a --json flag to the team command and document it.\n")
+    with open(os.path.join(project, "README.md"), "w", encoding="utf-8") as fh:
+        fh.write("# plan-project\n\nPLAN-CONTEXT-MARKER\n")
+    run(project, ["init"], env)
+
+    code, out, err = run(project, ["plan", "--requirements", requirements,
+                                   "--planner", "dsh:auto", "--no-quota"], env)
+    check("planning on the lead session is refused from a script",
+          code == 2 and "lead session" in (out + err), out + err)
+    code, out, err = run(project, ["call", "--role", "plan", "--prompt", "hi",
+                                   "--dry-run"], env)
+    check("call --role plan points at the plan command",
+          code == 2 and "models.py plan" in (out + err), out + err)
+
+    for args in (
+        ["add-custom", "p_low", "--base-url", base_a, "--models", "mock-ok",
+         "--auth", "none"],
+        ["add-custom", "p_high", "--base-url", base_b, "--format", "anthropic-messages",
+         "--models", "claude-mock", "--auth", "apiKey"],
+        ["add-custom", "p_dead", "--base-url", base_a, "--models", "mock-ok",
+         "--auth", "none"],
+        ["add-custom", "p_400", "--base-url", base_a, "--models", "mock-400",
+         "--auth", "none"],
+    ):
+        run(project, args, env)
+    run(project, ["key", "set", "p_high", "--from-env", "TEST_KEY"], env)
+    _patch_config(config_path, lambda cfg: cfg.__setitem__("lanes", {
+        "codex": {"enabled": False}, "dsh": {"enabled": False}}))
+    _patch_config(config_path, lambda cfg: cfg["providers"]["p_low"].__setitem__(
+        "overrides", {"mock-ok": {"family": "planlab",
+                                  "scores": {"reasoning": 1, "design": 1,
+                                             "agentic": 1, "coding": 1}}}))
+    _patch_config(config_path, lambda cfg: cfg["providers"]["p_high"].__setitem__(
+        "overrides", {"claude-mock": {"family": "planbeta",
+                                      "scores": {"reasoning": 5, "design": 5,
+                                                 "agentic": 5, "coding": 5}}}))
+    _patch_config(config_path, lambda cfg: cfg["providers"]["p_dead"].__setitem__(
+        "overrides", {"mock-ok": {"family": "plandead",
+                                  "scores": {"reasoning": 4, "design": 4,
+                                             "agentic": 4, "coding": 4}}}))
+
+    code, out, err = run(project, ["route", "--role", "plan", "--no-quota", "--json"], env)
+    plan = json.loads(out) if code == 0 else {}
+    primary = plan.get("primary") or {}
+    check("the planner is the highest scored model",
+          code == 0 and primary.get("id") == "p_high/claude-mock"
+          and primary.get("planning", {}).get("weighted") == 5.0, out + err)
+    check("planning scores report their source",
+          primary.get("planning", {}).get("source") == "config", out + err)
+
+    code, out, err = run(project, ["plan", "--requirements", requirements,
+                                   "--dry-run", "--no-quota"], env)
+    check("plan dry-run picks the scored planner without calling",
+          code == 0 and "p_high/claude-mock" in out and "POST" in out, out + err)
+    code, out, err = run(project, ["plan", "--requirements", requirements,
+                                   "--planner", "p_low/mock-ok", "--dry-run",
+                                   "--no-quota"], env)
+    check("an explicit planner overrides the score",
+          code == 0 and "p_low/mock-ok" in out, out + err)
+
+    code, out, err = run(project, ["plan", "--requirements", requirements,
+                                   "--planner", "p_high/claude-mock", "--max-tokens",
+                                   "64", "--no-quota", "--json"], env)
+    record = json.loads(out) if out.strip().startswith("{") else {}
+    plan_file = os.path.join(project, "_work", "plan", "plan.md")
+    check("the planning call writes the plan and a planner record",
+          code == 0 and os.path.isfile(plan_file)
+          and "anthropic ok" in open(plan_file, encoding="utf-8").read()
+          and record.get("planner") == "p_high/claude-mock"
+          and record.get("scores", {}).get("weighted") == 5.0, out + err)
+    brief_text = open(record.get("request"), encoding="utf-8").read() \
+        if record.get("request") else ""
+    check("the planning brief carries a repository snapshot",
+          "PLAN-CONTEXT-MARKER" in brief_text and "README.md" in brief_text,
+          brief_text[:200])
+
+    # Dry-run must not read quota or write state/plan output.
+    state_path = os.path.join(project, "_work", "models", "state.json")
+    before_state = hashlib.sha256(open(state_path, "rb").read()).hexdigest()
+    before_plan = os.path.getmtime(plan_file)
+    code, out, err = run(project, ["plan", "--requirements", requirements,
+                                   "--dry-run"], env)
+    after_state = hashlib.sha256(open(state_path, "rb").read()).hexdigest()
+    check("plan dry-run leaves state and plan output untouched",
+          code == 0 and after_state == before_state
+          and os.path.getmtime(plan_file) == before_plan, out + err)
+
+    # Fallback: the record must name the model that actually produced the plan.
+    _patch_config(config_path, lambda cfg: cfg["providers"]["p_high"].__setitem__(
+        "baseUrl", "http://127.0.0.1:9/v1"))
+    code, out, err = run(project, ["plan", "--requirements", requirements,
+                                   "--max-tokens", "64", "--no-quota", "--json"], env)
+    record = json.loads(out) if out.strip().startswith("{") else {}
+    check("a fallback planner is recorded as the actual producer",
+          code == 0 and record.get("planner") == "p_dead/mock-ok"
+          and record.get("selectedPlanner") == "p_high/claude-mock"
+          and record.get("scores", {}).get("weighted") == 4.0, out + err)
+    _patch_config(config_path, lambda cfg: cfg["providers"]["p_high"].__setitem__(
+        "baseUrl", base_b))
+
+    code, out, err = run(project, ["plan", "--requirements", requirements,
+                                   "--planner", "p_400/mock-400", "--no-quota"], env)
+    check("a request-scoped planner failure returns exit 4", code == 4, out + err)
+
+    _patch_config(config_path, lambda cfg: cfg["providers"]["p_low"].__setitem__(
+        "overrides", {"mock-ok": {"scores": {"reasoning": "abc", "design": 99,
+                                             "agentic": -5, "coding": 2}}}))
+    import model_route as route_mod  # noqa: PLC0415
+    cfg_scores = json.load(open(config_path, encoding="utf-8"))
+    scores = route_mod.planning_scores({"lane": "http", "family": "planlab",
+                                        "provider": "p_low", "model": "mock-ok"},
+                                       cfg_scores)
+    check("invalid planning scores are clamped or fall back",
+          scores["reasoning"] == 3 and scores["design"] == 5
+          and scores["agentic"] == 0 and scores["coding"] == 2
+          and scores["source"] == "config", scores)
+
+    empty = os.path.join(work, "plan-empty")
+    os.makedirs(empty)
+    run(empty, ["init"], env)
+    _patch_config(os.path.join(empty, "_work", "models", "config.json"),
+                  lambda cfg: cfg.__setitem__("lanes", {
+                      "codex": {"enabled": False}, "dsh": {"enabled": False}}))
+    code, out, err = run(empty, ["plan", "--requirements", requirements,
+                                 "--no-quota"], env)
+    check("no usable planner exits 3", code == 3, out + err)
+
+    # The team gate applies to the planner too.
+    run(project, ["team", "scan", "--json", "--no-local"], env)
+    code, out, err = run(project, ["team", "add", "p_low/mock-ok"], env)
+    check("a lower-scored approved model can be the planner", code == 0, out + err)
+    code, out, err = run(project, ["route", "--role", "plan", "--no-quota", "--json"], env)
+    plan = json.loads(out) if code == 0 else {}
+    check("an unapproved high-score model cannot plan",
+          code == 0 and plan.get("primary", {}).get("id") == "p_low/mock-ok", out + err)
+    code, out, err = run(project, ["plan", "--requirements", requirements,
+                                   "--planner", "p_high/claude-mock", "--no-quota"], env)
+    check("pinning an unapproved planner fails", code == 2, out + err)
 
 
 if __name__ == "__main__":

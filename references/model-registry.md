@@ -57,23 +57,27 @@ appended to `_work/models/model_changes.log`.
 
 ## Routing
 
-1. **Pin wins, exactly.** `models.py route --pin <id>` either returns that id or exits
+1. **Planning is scored, dispatching is not.** `route --role plan` ranks by reasoning
+   (0.35) / design (0.30) / agentic (0.20) / coding (0.15), not by quota or habit. The
+   planner produces the executable plan; the lead (dispatcher) owns the board and
+   assignments. The plan is reviewed by a different family before dispatch.
+2. **Pin wins, exactly.** `models.py route --pin <id>` either returns that id or exits
    3 with the reason; it never substitutes a different provider. `models.py use <role>
    <id>` is the persistent form.
-2. **Protected defaults.** `lead`/`mechanical` → dsh; `review`/`vision` → codex.
+3. **Protected defaults.** `lead`/`mechanical` → dsh; `review`/`vision` → codex.
    A provider may replace them only by an explicit role switch or pin.
-3. **Capability match**: visual units → a model that declares vision (the codex lane by
+4. **Capability match**: visual units → a model that declares vision (the codex lane by
    default; HTTP rows need `vision: true`); reasoning-heavy design/long-form → the
    strongest reasoning model while quota allows; mechanical work → the lead; independent
    review → a different family from the producer.
-4. **Independence**: `route --role review --producer <id>` excludes the producer's
+5. **Independence**: `route --role review --producer <id>` excludes the producer's
    family and excludes rows whose family cannot be established (aggregators). Declare
    `overrides.<model>.family` for a private model; `--allow-unknown-family` accepts the
    risk and must be declared at delivery.
-5. One artifact, at most two producers; more requires explicit boundaries.
-6. Per model: ≤2 concurrent calls; serialize when unstable.
-7. Shared facts pack; no divergent assumptions.
-8. Handoffs must be self-contained — no "as discussed above".
+6. One artifact, at most two producers; more requires explicit boundaries.
+7. Per model: ≤2 concurrent calls; serialize when unstable.
+8. Shared facts pack; no divergent assumptions.
+9. Handoffs must be self-contained — no "as discussed above".
 
 ## Budget: quota-tiered
 

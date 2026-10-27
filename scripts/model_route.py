@@ -28,7 +28,60 @@ import model_config as cfg_mod
 import model_registry as registry
 
 PROTECTED = {"lead": "dsh", "mechanical": "dsh", "review": "codex", "vision": "codex"}
-ROLE_NAMES = ("lead", "produce", "review", "vision", "mechanical")
+ROLE_NAMES = ("lead", "plan", "produce", "review", "vision", "mechanical")
+
+#: Planning is a different job from dispatching: the planner must understand the
+#: requirement, research the field, compare open source, design the architecture,
+#: choose a stack and produce an executable plan. These four dimensions decide who
+#: plans; the weights say what matters most when they disagree.
+PLANNING_WEIGHTS = {"reasoning": 0.35, "design": 0.30, "agentic": 0.20, "coding": 0.15}
+
+#: Conservative defaults when the project declares no scores. They are heuristics
+#: about *general* model strength, not measured passes; a project that cares should
+#: set `overrides.<model>.scores` and the source is reported as `config`.
+PLANNING_DEFAULTS = {
+    "openai": {"reasoning": 5, "design": 5, "agentic": 5, "coding": 5},
+    "anthropic": {"reasoning": 4, "design": 5, "agentic": 4, "coding": 5},
+    "deepseek": {"reasoning": 4, "design": 4, "agentic": 4, "coding": 5},
+    "google": {"reasoning": 4, "design": 4, "agentic": 4, "coding": 4},
+}
+LANE_PLANNING = {"codex": PLANNING_DEFAULTS["openai"],
+                 "dsh": PLANNING_DEFAULTS["deepseek"]}
+NEUTRAL_PLANNING = {"reasoning": 3, "design": 3, "agentic": 3, "coding": 3}
+
+
+def _score(value, fallback):
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return fallback
+    return max(0.0, min(5.0, number))
+
+
+def planning_scores(entry, cfg):
+    """Reasoning/design/agentic/coding scores for one catalog entry.
+
+    Priority: explicit `overrides.<model>.scores` > lane default > family default >
+    neutral 3. The weighted value is what `route --role plan` sorts by.
+    """
+    lane = entry.get("lane")
+    base = dict(LANE_PLANNING.get(lane) or
+                PLANNING_DEFAULTS.get(entry.get("family")) or NEUTRAL_PLANNING)
+    source = "lane" if lane in LANE_PLANNING else (
+        "family" if entry.get("family") in PLANNING_DEFAULTS else "neutral")
+    if lane == "http":
+        setting = ((cfg.get("providers") or {}).get(entry.get("provider")) or {})
+        override = (((setting.get("overrides") or {}).get(entry.get("model")) or {})
+                    .get("scores") or {})
+        if isinstance(override, dict):
+            for key in ("reasoning", "design", "agentic", "coding"):
+                if key in override:
+                    base[key] = _score(override[key], base[key])
+                    source = "config"
+    weighted = sum(base[key] * PLANNING_WEIGHTS[key] for key in PLANNING_WEIGHTS)
+    return {**{key: round(base[key], 1) for key in base},
+            "weighted": round(weighted, 2), "source": source}
+
 
 
 class RouteError(Exception):
@@ -154,6 +207,8 @@ def catalog(cfg, state, project="."):
                     "maxOutput": 128000 if lane == "codex" else 32768,
                 },
             }
+            entry["planning"] = planning_scores(entry, cfg)
+            entry["planningSource"] = entry["planning"]["source"]
             entries.append(entry)
 
     provider_ids = []
@@ -247,11 +302,15 @@ def catalog(cfg, state, project="."):
                 "usable": reason is None,
                 "reason": reason,
                 "capabilities": caps,
+                "planning": planning_scores(
+                    {"lane": "http", "family": family, "provider": pid,
+                     "model": model_id}, cfg),
                 "credentialSource": key_source,
                 "category": record.get("category"),
                 "local": bool(record.get("local")),
                 "allowProtectedFamily": allow_protected,
             }
+            entry["planningSource"] = entry["planning"]["source"]
             entries.append(entry)
     return entries
 
@@ -360,6 +419,10 @@ def route(cfg, state, role, needs=None, exclude_families=(), pin=None, project="
     """
     if role not in ROLE_NAMES:
         raise RouteError(f"unknown role {role!r} (known: {', '.join(ROLE_NAMES)})")
+    if role == "plan":
+        # Planning is scored, not budgeted: reading the codex pool here would only
+        # add a subprocess and a state write to a decision quota does not affect.
+        read_quota = False
     needs = dict(needs or {})
     notes = []
     entries = catalog(cfg, state, project)
@@ -478,6 +541,53 @@ def route(cfg, state, role, needs=None, exclude_families=(), pin=None, project="
             kept = [preferred_entry] + [entry for entry in kept
                                         if entry["id"] != preferred_entry["id"]]
             notes.append(f"primary follows the configured model {preferred}")
+
+    if role == "plan" and not pin:
+        # Planning is scored, not inherited: reasoning, design, agentic and coding
+        # decide the planner. An explicit role model still wins (it is the user's
+        # decision), but nothing else is reordered by lane or quota here.
+        chosen = find(entries, preferred) if preferred else None
+        if chosen is not None and chosen.get("usable") and chosen in kept:
+            ordered = [chosen] + sorted(
+                [entry for entry in kept if entry["id"] != chosen["id"]],
+                key=lambda entry: (-entry["planning"]["weighted"],
+                                   -_health_rank(state, entry),
+                                   _preference(cfg, entry), entry["id"]))
+            notes.append(f"planner follows the configured model {preferred}")
+        else:
+            ordered = sorted(
+                kept,
+                key=lambda entry: (-entry["planning"]["weighted"],
+                                   -_health_rank(state, entry),
+                                   _preference(cfg, entry), entry["id"]))
+            if ordered:
+                notes.append("planner chosen by reasoning/design/agentic/coding scores")
+        if not ordered:
+            detail = "; ".join(f"{mid}: {why}" for mid, why in excluded[:8]) or \
+                "no providers configured"
+            raise RouteError(f"no usable planner ({detail})")
+        primary = ordered[0]
+        fallback = [entry for entry in ordered[1:1 + max(0, limit)]
+                    if entry["lane"] != "dsh"]
+        if primary["lane"] == "dsh":
+            notes.append("the planner is the lead session; models.py plan will write the "
+                         "brief for the session to draft, not spawn a caller")
+        scores = primary.get("planning") or {}
+        notes.append(f"scores r={scores.get('reasoning')} d={scores.get('design')} "
+                     f"a={scores.get('agentic')} c={scores.get('coding')} "
+                     f"(weighted {scores.get('weighted')}, source "
+                     f"{scores.get('source')})")
+        return {
+            "role": role,
+            "needs": needs,
+            "primary": primary,
+            "fallback": fallback,
+            "notes": notes,
+            "excluded": [{"id": mid, "reason": why} for mid, why in excluded],
+            "quota": {key: quota.get(key) for key in
+                      ("source", "remaining", "hours_left", "weekly_remaining", "tier",
+                       "stale", "stale_reason")} if quota else {},
+        }
 
     protected_lane = PROTECTED.get(role)
     # The protected lane keeps the head only when the user has not pointed the role

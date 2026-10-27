@@ -167,6 +167,45 @@ python scripts/models.py team clear           # back to "every configured provid
   local service (base URL + discovered models) without the user retyping it; the
   fingerprint invalidates a stale cache.
 
+## Planner vs dispatcher (planner role)
+
+Planning is a separate job from dispatching. The **planner** must independently
+understand the requirement, inspect the repository, research the field and comparable
+open source, design the architecture, choose the stack, and produce an executable plan.
+The **dispatcher** (the lead) turns that plan into the task board, assigns producers and
+reviewers, and owns integration. One model may do both, but the roles and the acceptance
+of the plan are separate: the plan is reviewed by a **different family** before dispatch.
+
+```bash
+python scripts/models.py route --role plan            # who should plan, and why
+python scripts/models.py plan --requirements req.md  # call the planner, write the plan
+python scripts/models.py plan --requirements req.md --planner anthropic/claude-sonnet-4-20250514
+python scripts/models.py plan --requirements req.md --dry-run
+```
+
+**Selection** is by four scores — `reasoning` (0.35), `design` (0.30), `agentic` (0.20),
+`coding` (0.15) — not by quota tier or habit. Defaults are heuristics by lane/family
+(`codex` 5/5/5/5, `dsh` 4/4/4/5, Anthropic 4/5/4/5, DeepSeek 4/4/4/5, Google 4/4/4/4,
+others 3/3/3/3). Override per model in the project config and the source is reported as
+`config`:
+
+```json
+"overrides": {
+  "claude-sonnet-4-20250514": {
+    "scores": {"reasoning": 5, "design": 5, "agentic": 4, "coding": 4}
+  }
+}
+```
+
+- The plan is written to `<project>/_work/plan/plan.md` with a `planner.json` record
+  (request id, planner, scores, usage, attempts).
+- `models.py plan` refuses when the planner is the `dsh` lane: the session must draft that
+  plan itself; the CLI writes the brief and exits 2.
+- `call --role plan` refuses; planning has its own brief, output and record.
+- The planner does not assign work. The plan ends with suggested work packages; the
+  dispatcher decides owners, and the plan goes through the review gate first
+  (`models.py call --role review --producer <planner>`).
+
 ## Providers and model rows
 
 `models.py providers` lists the vendored registry (76 providers: 61 API-key, 10
