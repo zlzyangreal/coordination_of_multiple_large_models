@@ -146,7 +146,7 @@ python scripts/models.py team clear           # back to "every configured provid
   `added` and `declined`. **Its existence is the switch**: any existing team document is
   an allowlist, even `{}`; a row that is not in `added` is inactive (`usable: false`,
   reason "not in this task's team"), even if it is configured. A **missing** file is the
-  v1.7.0 behaviour (every configured provider participates). Malformed team files fail
+  pre-2.0 behaviour (every configured provider participates). Malformed team files fail
   closed.
 - **Approval is bound to what was scanned.** Each candidate carries a fingerprint of
   provider, endpoint, wire, auth kind and model. If the config changes after the scan,

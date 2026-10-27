@@ -48,7 +48,7 @@ if hasattr(sys.stdout, "reconfigure"):
 if hasattr(sys.stderr, "reconfigure"):
     sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
-SKILL_VERSION = "1.7.0"
+SKILL_VERSION = "2.0.0"
 
 #: Failures that must move to the next link instead of retrying the same one.
 #: Retrying a 429 or an auth refusal spends a call to learn the same thing.

@@ -1,8 +1,8 @@
 ---
 name: coordination_of_multiple_large_models
-description: Orchestrate two or more LLMs on one deliverable, across code, documents and data — capability check, model verification, quota-tiered routing, per-project multi-provider access (free/keyless, API key, custom base URL, local server, account-token import), task contract, request/result envelopes, zero-write review calls, schema-enforced review gate, failure handling. Use for multi-model routing, adding or switching model providers, GPT/Codex reviews, subagent handoffs, adopting review findings, model outages or proxy issues, and collaboration postmortems. 触发词：多模型协作、模型分工、模型路由、模型接入、模型切换、免费模型、API Key、自定义 API 地址、Ollama、本地模型、额度分档、GPT 额度利用率、GPT 评审、codex 评审、子代理协作、评审结论采纳、模型卡顿、codex 超时、代理问题、协作复盘。
+description: Orchestrate two or more LLMs on one deliverable, across code, documents and data — capability check, model verification, quota-tiered routing, per-project multi-provider access (free/keyless, API key, custom base URL, local server, account-token import), task contract, request/result envelopes, zero-write review calls, schema-enforced review gate, failure handling. Use for multi-model routing, adding or switching model providers, GPT/Codex reviews, subagent handoffs, adopting review findings, model outages or proxy issues, and collaboration postmortems. 触发词：多模型协作、模型分工、模型路由、模型接入、模型接入、模型团队、入队审批、模型切换、免费模型、API Key、自定义 API 地址、Ollama、本地模型、额度分档、GPT 额度利用率、GPT 评审、codex 评审、子代理协作、评审结论采纳、模型卡顿、codex 超时、代理问题、协作复盘。
 metadata:
-  version: 1.7.0
+  version: 2.0.0
   updated: 2026-10-27
 allowed-tools: Read, Write, Edit, Bash
 ---
@@ -57,7 +57,7 @@ Skip for single-model, single-file, one-shot work — but still run `scripts/che
 ## Session
 
 ```
-SKILL v1.7.0 (pinned 19:36) | quota 5h 78% / week 96% | 阶段：评审
+SKILL v2.0.0 (pinned 19:36) | quota 5h 78% / week 96% | 阶段：评审
 ```
 
 - First turn: `python scripts/session.py pin`. Every turn after: `python scripts/session.py status --stage <stage>`.
