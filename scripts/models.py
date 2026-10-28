@@ -34,6 +34,7 @@ import socket
 import subprocess
 import sys
 import time
+from datetime import datetime
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
@@ -1368,23 +1369,43 @@ def _read_prompt(args):
     return args.prompt or ""
 
 
-def _codex_call(args, entry, prompt, project, request_id, request_path):
+def _codex_call(args, entry, prompt, project, request_id, request_path, role=None):
     run_gpt = os.environ.get("COORD_RUN_GPT") or os.path.join(HERE, "run_gpt.py")
     if not os.path.isfile(run_gpt):
         return fail(f"runner missing: {run_gpt}", 2), None
     models_dir = cfg_mod.paths(project)["models_dir"]
     out_dir = os.path.join(models_dir, "out")
     payload = os.path.join(out_dir, f"{request_id}.txt")
-    cmd = [sys.executable, run_gpt, "--prompt-file", request_path, "--cd", project,
-           "--sandbox", args.sandbox or "read-only",
-           "--output", payload, "--request-id", request_id,
-           "--calls-dir", os.path.join(models_dir, "calls"),
-           "--ledger", os.path.join(project, "_work", "quota_ledger.md")]
+    effective_role = role or getattr(args, "role", None)
+    if effective_role == "probe":
+        cmd = [sys.executable, run_gpt, "--prompt-file", request_path, "--cd", project,
+               "--sandbox", "read-only", "--probe", "--no-ledger",
+               "--request-id", request_id,
+               "--calls-dir", os.path.join(project, "_work", "calls")]
+    else:
+        cmd = [sys.executable, run_gpt, "--prompt-file", request_path, "--cd", project,
+               "--sandbox", args.sandbox or "read-only",
+               "--output", payload, "--request-id", request_id,
+               "--calls-dir", os.path.join(project, "_work", "calls"),
+               "--ledger", os.path.join(project, "_work", "quota_ledger.md")]
+    if effective_role:
+        cmd += ["--role", effective_role]
+    for attribute, flag in (("milestone", "--milestone"),
+                            ("work_package", "--work-package"),
+                            ("produce_artifact", "--produce-artifact"),
+                            ("schema", "--schema"),
+                            ("envelope", "--envelope"),
+                            ("result_path", "--result-path"),
+                            ("why_unclosed", "--why-unclosed"),
+                            ("budget_change", "--budget-change")):
+        value = getattr(args, attribute, None)
+        if value:
+            cmd += [flag, str(value)]
     if entry.get("model"):
         cmd += ["--model", entry["model"]]
     if entry.get("effort"):
         cmd += ["--effort", entry["effort"]]
-    if args.timeout:
+    if getattr(args, "timeout", None):
         cmd += ["--timeout", str(args.timeout)]
     if args.dry_run:
         emit("[dry-run] " + " ".join(cmd))
@@ -1430,6 +1451,24 @@ def _codex_call(args, entry, prompt, project, request_id, request_path):
         "attempts": [],
     }
     return status, result
+
+
+def _effective_role(args):
+    if getattr(args, "role", None):
+        return args.role
+    return "review" if getattr(args, "schema", None) else "produce"
+
+
+def _call_meta(args, role=None):
+    role = role or _effective_role(args)
+    return {
+        "protocolVersion": 2,
+        "role": role,
+        "roleSource": "explicit" if getattr(args, "role", None) else "inferred",
+        "milestone": getattr(args, "milestone", None),
+        "workPackage": getattr(args, "work_package", None),
+        "tierSource": "unavailable",
+    }
 
 
 def _http_call(args, entry, prompt, cfg, project, request_id, attempts):
@@ -1493,6 +1532,7 @@ def _http_call(args, entry, prompt, cfg, project, request_id, attempts):
                 "lane": "http", "provider": pid, "status": "failed",
                 "kind": exc.kind, "http": exc.status, "message": message,
                 "latencySeconds": round(time.time() - started, 2),
+                **_call_meta(args),
             })
             last_error = exc
             if not exc.should_fallback:
@@ -1521,6 +1561,7 @@ def _http_call(args, entry, prompt, cfg, project, request_id, attempts):
             "ts": cfg_mod.iso(), "requestId": request_id, "model": entry["id"],
             "lane": "http", "provider": pid, "status": "ok",
             "latencySeconds": answer.get("latencySeconds"), "usage": usage,
+            **_call_meta(args),
         })
         return 0, answer, None
     return 5, None, (f"{last_error.kind}: {last_error.message}" if last_error
@@ -1695,7 +1736,8 @@ def cmd_plan(args):
 
     if args.dry_run:
         if planner["lane"] == "codex":
-            _codex_call(args, planner, prompt, project, request_id, request_path)
+            _codex_call(args, planner, prompt, project, request_id, request_path,
+                        role="plan")
         else:
             record = _record(planner["provider"], cfg)
             setting = _setting(planner["provider"], cfg)
@@ -1711,7 +1753,7 @@ def cmd_plan(args):
             continue
         if entry["lane"] == "codex":
             status, result = _codex_call(args, entry, prompt, project, request_id,
-                                         request_path)
+                                         request_path, role="plan")
             attempts.append({"model": entry["id"], "lane": "codex",
                              "outcome": "ok" if status == 0 else "failed",
                              "exit": status})
@@ -1744,6 +1786,9 @@ def cmd_plan(args):
     os.makedirs(os.path.dirname(output) or ".", exist_ok=True)
     with open(output, "w", encoding="utf-8", newline="\n") as fh:
         fh.write(final["text"].rstrip() + "\n")
+    plan_hash = hashlib.sha256(open(output, "rb").read()).hexdigest()
+    plan_mtime = datetime.fromtimestamp(os.path.getmtime(output)).astimezone() \
+        .isoformat(timespec="seconds")
     record = {
         "requestId": request_id,
         "planner": final["model"],
@@ -1751,6 +1796,9 @@ def cmd_plan(args):
         "selectedPlanner": planner["id"],
         "selectedScores": scores,
         "output": output,
+        "plan_path": output,
+        "plan_sha256": plan_hash,
+        "plan_mtime": plan_mtime,
         "request": request_path,
         "lane": final["lane"],
         "model": final["model"],
@@ -1798,7 +1846,7 @@ def cmd_call(args):
         if not links:
             detail = "; ".join(f"{row['id']}: {row['reason']}" for row in dropped)
             return fail(f"chain {args.chain!r} has no usable link ({detail})", 3)
-    elif args.role:
+    elif args.role and args.role != "probe":
         try:
             plan = model_route.route(
                 cfg, state, args.role, needs=_needs_from_args(args),
@@ -1830,11 +1878,44 @@ def cmd_call(args):
                     + ("; use `models.py plan --requirements <file>`"
                        if args.role == "plan" else
                        f"; role {args.role!r} is the lead session itself"), 2)
-    if args.role == "produce" and links and links[0]["lane"] == "dsh":
+    role_source = "explicit" if args.role else "inferred"
+    effective_role = args.role or ("review" if args.schema else "produce")
+    if effective_role == "probe":
+        forbidden = [flag for flag, value in (("--output", args.output),
+                                             ("--result-path", args.result_path),
+                                             ("--schema", args.schema),
+                                             ("--envelope", args.envelope),
+                                             ("--work-package", args.work_package),
+                                             ("--produce-artifact", args.produce_artifact))
+                     if value]
+        if forbidden:
+            return fail(f"role 'probe' is text-only and cannot use "
+                        f"{', '.join(forbidden)}; use --role produce with a reviewed plan "
+                        f"or --role review", 2)
+        if not (args.model or args.chain):
+            return fail("role 'probe' needs an explicit --model or --chain", 2)
+    if effective_role == "produce" and links and links[0]["lane"] == "dsh" and args.role:
         return fail("the quota tier assigns production to the lead; do the work in the "
                     "session (or pin a codex/HTTP model explicitly).", 2)
+    if effective_role in ("review", "plan-review"):
+        missing = [flag for flag, value in (("--schema", args.schema),
+                                            ("--envelope", args.envelope),
+                                            ("--result-path", args.result_path),
+                                            ("--milestone", args.milestone)) if not value]
+        if missing:
+            return fail(f"role {effective_role!r} needs {', '.join(missing)}; a review "
+                        f"must be adoptable, not just text", 2)
+    if effective_role == "produce" and not args.dry_run:
+        import plan_gate  # noqa: PLC0415
+        code, report = plan_gate.check_plan(project)
+        if code != 0:
+            return fail(f"plan gate blocked ({code}): {report.get('message')}", 2)
+        if not args.work_package:
+            emit("[WARN] produce call without --work-package: it cannot satisfy the "
+                 "delivery gate")
 
     if args.dry_run:
+        emit(f"[dry-run] role={effective_role} ({role_source})")
         for entry in links:
             if entry["lane"] == "http":
                 record = _record(entry["provider"], cfg)
@@ -1842,7 +1923,8 @@ def cmd_call(args):
                 emit(f"[dry-run] POST {registry.chat_url(record, setting.get('baseUrl'))} "
                      f"model={entry['model']} format={record.get('format')}")
             elif entry["lane"] == "codex":
-                _codex_call(args, entry, prompt, project, request_id, request_path)
+                _codex_call(args, entry, prompt, project, request_id, request_path,
+                            role=effective_role)
             else:
                 emit(f"[dry-run] {entry['id']}: the lead session owns this lane")
         return 0
@@ -1850,6 +1932,7 @@ def cmd_call(args):
     attempts = []
     final = None
     status = 5
+    review_reserved = False
     for entry in links:
         if entry["lane"] == "dsh":
             message = ("the dsh lane is the lead session and cannot be called from a "
@@ -1861,13 +1944,14 @@ def cmd_call(args):
             continue
         if entry["lane"] == "codex":
             status, result = _codex_call(args, entry, prompt, project, request_id,
-                                         request_path)
+                                         request_path, role=effective_role)
             attempts.append({"model": entry["id"], "lane": "codex",
                              "outcome": "ok" if status == 0 else "failed",
                              "exit": status})
             _append_call(project, {"ts": cfg_mod.iso(), "requestId": request_id,
                                    "model": entry["id"], "lane": "codex",
-                                   "status": "ok" if status == 0 else "failed"})
+                                   "status": "ok" if status == 0 else "failed",
+                                   **_call_meta(args, effective_role)})
             if status == 0:
                 final = result
                 break
@@ -1876,9 +1960,45 @@ def cmd_call(args):
                 # problem: falling back would hide a broken result behind another model.
                 break
             continue
+        if effective_role in ("review", "plan-review") and not review_reserved:
+            import review_budget as budget_mod  # noqa: PLC0415
+            code, info = budget_mod.preflight(
+                project, args.milestone, effective_role, request_id,
+                args.why_unclosed, args.budget_change)
+            if code != 0:
+                emit(f"[FAIL] review budget: {info.get('message')}")
+                return 2
+            review_reserved = True
         status, answer, message = _http_call(args, entry, prompt, cfg, project,
                                              request_id, attempts)
         if status == 0:
+            if effective_role in ("review", "plan-review"):
+                result_path = os.path.abspath(args.result_path)
+                os.makedirs(os.path.dirname(result_path) or ".", exist_ok=True)
+                with open(result_path, "w", encoding="utf-8", newline="\n") as fh:
+                    fh.write(answer["text"].rstrip() + "\n")
+                from validate_result import validate_files  # noqa: PLC0415
+                try:
+                    _, problems, _ = validate_files(
+                        result_path, os.path.abspath(args.schema),
+                        os.path.abspath(args.envelope))
+                except (OSError, ValueError) as exc:
+                    problems = [str(exc)]
+                _append_call(project, {
+                    "ts": cfg_mod.iso(), "requestId": request_id, "model": entry["id"],
+                    "lane": "http", "status": "ok", "resultPath": result_path,
+                    "resultSha256": hashlib.sha256(open(result_path, "rb").read()).hexdigest(),
+                    "envelopeSha256": hashlib.sha256(
+                        open(os.path.abspath(args.envelope), "rb").read()).hexdigest(),
+                    "schemaValid": not problems, **_call_meta(args, effective_role),
+                })
+                if problems:
+                    emit("[FAIL] review result is not adoptable: " + "; ".join(problems[:4]))
+                    status = 3
+                    final = {"requestId": request_id, "status": "schema-invalid",
+                             "model": entry["id"], "attempts": attempts,
+                             "message": "; ".join(problems[:4])}
+                    break
             final = {
                 "requestId": request_id,
                 "status": "ok",
@@ -1903,6 +2023,9 @@ def cmd_call(args):
             status = 5
 
     if final.get("status") == "ok":
+        if review_reserved:
+            import review_budget as budget_mod  # noqa: PLC0415
+            budget_mod.finalize(project, request_id)
         final.setdefault("dropped", dropped)
         if args.output:
             os.makedirs(os.path.dirname(os.path.abspath(args.output)) or ".", exist_ok=True)
@@ -1915,6 +2038,9 @@ def cmd_call(args):
             emit(final["text"])
         return 0
 
+    if review_reserved:
+        import review_budget as budget_mod  # noqa: PLC0415
+        budget_mod.finalize(project, request_id)
     if _json(args):
         emit(json.dumps(final, ensure_ascii=False, indent=2))
     else:
@@ -2205,6 +2331,14 @@ def build_parser():
     p.add_argument("--model")
     p.add_argument("--chain")
     p.add_argument("--role")
+    p.add_argument("--milestone")
+    p.add_argument("--work-package", dest="work_package")
+    p.add_argument("--produce-artifact", dest="produce_artifact")
+    p.add_argument("--why-unclosed", dest="why_unclosed")
+    p.add_argument("--budget-change", dest="budget_change")
+    p.add_argument("--schema")
+    p.add_argument("--result-path", dest="result_path")
+    p.add_argument("--envelope")
     p.add_argument("--prompt-file", dest="prompt_file")
     p.add_argument("--prompt")
     p.add_argument("--system")

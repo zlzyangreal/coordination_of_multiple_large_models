@@ -1,6 +1,13 @@
 # Facts pack — <artifact name>
 
-Frozen: YYYY-MM-DD HH:MM. One file, shared by every model.
+facts_version: 1
+facts_hash: <filled by scripts/facts_pack.py freeze>
+frozen_at: <filled by scripts/facts_pack.py freeze>
+
+One file, shared by every model. Frozen before work starts; any scope or budget change goes
+through `python scripts/facts_pack.py bump --reason "..."`, which increments the version,
+appends a row to `## version log`, and recomputes the hash. A stale pack cannot build an
+envelope.
 
 ## Goal, audience, deliverable
 
@@ -22,13 +29,16 @@ Frozen: YYYY-MM-DD HH:MM. One file, shared by every model.
 
 | budget | value | changed | reason |
 |---|---|---|---|
-| size (lines / files / pages / PR) | 600 lines | 2026-10-24: 600 → 750 | retry path needed its own module |
+| review_calls | 2 per milestone | | default: round 3 needs --why-unclosed, a raise needs a reason |
+| review_minutes | 30 min | | default |
+| size (lines / files / pages / PR) | 600 lines | | |
 | performance envelope | p95 < 200 ms | | |
 | GPT calls | 6 | | |
 | deadline | YYYY-MM-DD | | |
 
-Rule: budgets move only **before** production, with the change recorded here and in the
-review ledger's `budget_change` column. "After seeing the draft" is not a reason.
+Rule: budgets move only **before** production, with the change recorded here (and the review
+ledger's `budget_change` column / `review_budget.py raise`). "After seeing the draft" is not a
+reason.
 
 ## Data, definitions, fixtures
 
@@ -45,3 +55,9 @@ review ledger's `budget_change` column. "After seeing the draft" is not a reason
 
 Units with an advisory source are reviewed as `origin: advisory-derived`; they are not
 independently reviewed unless another model reviews them.
+
+## version log
+
+| version | at | reason |
+|---|---|---|
+| 1 | YYYY-MM-DDTHH:MM:SS+08:00 | initial freeze |

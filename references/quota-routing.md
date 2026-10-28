@@ -16,6 +16,14 @@ Both are read from the CLI, not guessed.
    artifact has a visual surface (only the multimodal model can see it). Everything else is
    negotiable.
 5. **Re-read, never remember.** Percent is 1-pt coarse and invisible between calls.
+6. **A review is a budgeted call.** Two review calls and 30 minutes per milestone by default.
+   The third round needs `--why-unclosed`; exceeding the call budget needs a one-off
+   `--budget-change` or `review_budget.py raise` (which bumps the facts pack). Minutes over the
+   budget need a `note-minutes` row. The ledger is `_work/gates/events.jsonl`.
+7. **Production is checked, not assumed.** At S/A, `review_budget.py deliver` requires one
+   `role=produce` unit whose work package matches the reviewed plan, whose artifact matches the
+   row's declared `output`, and whose adoption event is booked. B/C/R/U are exempt; `probe`
+   never counts. A missing tier fails delivery (pass `--tier` explicitly rather than guess).
 
 ## Read (gate)
 

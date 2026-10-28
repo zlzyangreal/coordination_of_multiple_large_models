@@ -26,6 +26,9 @@ if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, HERE)
+import gate_common as common  # noqa: E402
+
 DEFAULT_SCHEMA = os.path.join(HERE, "..", "assets", "result.schema.json")
 TYPES = {
     "object": dict, "array": list, "string": str, "integer": int,
@@ -75,8 +78,60 @@ def check(node, schema, path, errors):
                 check(item, schema["items"], f"{path}[{i}]", errors)
 
 
+def _parse_evidence_block(text):
+    """Parse the `test_evidence:` list without PyYAML (the runtime has no dependency)."""
+    lines = text.splitlines()
+    start = None
+    for index, line in enumerate(lines):
+        if re.match(r"^test_evidence\s*:", line):
+            start = index
+            break
+    if start is None:
+        return []
+    head = lines[start].split(":", 1)[1].strip()
+    if head == "[]":
+        return []
+    items, current = [], None
+    for line in lines[start + 1:]:
+        if line and not line.startswith(" "):
+            break
+        item = re.match(r"^\s*-\s+id:\s*(.+?)\s*$", line)
+        if item:
+            if current:
+                items.append(current)
+            current = {"id": _unquote(item.group(1))}
+            continue
+        if current is None:
+            continue
+        field = re.match(r"^\s+(command|exit_code|at|log_path|log_sha256|summary):\s*(.*)$", line)
+        if field:
+            key, raw = field.group(1), field.group(2).strip()
+            if key == "exit_code":
+                try:
+                    current[key] = int(raw)
+                except ValueError:
+                    current[key] = raw
+            elif raw.startswith('"'):
+                try:
+                    current[key] = json.loads(raw)
+                except ValueError:
+                    current[key] = _unquote(raw)
+            else:
+                current[key] = _unquote(raw)
+    if current:
+        items.append(current)
+    return items
+
+
+def _unquote(value):
+    value = value.strip()
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in ("'", '"'):
+        return value[1:-1]
+    return value
+
+
 def load_envelope(path):
-    """Flat envelope: pyyaml when present, regex fallback otherwise."""
+    """Flat envelope + test_evidence: pyyaml when present, regex fallback otherwise."""
     with open(path, encoding="utf-8-sig") as fh:
         text = fh.read()
 
@@ -88,14 +143,18 @@ def load_envelope(path):
         import yaml  # noqa: F401
         data = yaml.safe_load(text) or {}
         if isinstance(data, dict):
-            return {k: norm(v) for k, v in data.items()}
+            out = {k: norm(v) for k, v in data.items()}
+            out["test_evidence"] = data.get("test_evidence") or []
+            return out
     except Exception:  # noqa: BLE001
         pass
     out = {}
     for line in text.splitlines():
         m = re.match(r'^([A-Za-z_][\w]*):\s*(.+?)\s*$', line)
-        if m and m.group(1) not in ("units", "prior_findings", "acceptance", "scope"):
+        if m and m.group(1) not in ("units", "prior_findings", "acceptance", "scope",
+                                   "test_evidence"):
             out[m.group(1)] = m.group(2).strip().strip('"')
+    out["test_evidence"] = _parse_evidence_block(text)
     return out
 
 
@@ -104,6 +163,84 @@ def envelope_units(env):
     if isinstance(units, dict):
         units = list(units.values())
     return [str(u["id"]) for u in units if isinstance(u, dict) and u.get("id")]
+
+
+def _abs_path(path):
+    path = str(path or "")
+    return path if path and os.path.isabs(path) else os.path.abspath(path)
+
+
+def check_facts(env, result, errors):
+    """A v2 envelope's facts pack must still hash to the value it recorded."""
+    if str(env.get("envelope_version") or "") != "2":
+        return
+    declared_version = env.get("facts_version")
+    declared_hash = env.get("facts_hash")
+    facts_path = env.get("facts_path")
+    if not declared_version or not declared_hash or not facts_path:
+        errors.append("$.facts_version: a v2 envelope must carry facts_path/version/hash")
+        return
+    if str(result.get("facts_version") or "") != str(declared_version):
+        errors.append(f"$.facts_version: {result.get('facts_version')!r} != envelope "
+                      f"{declared_version!r}")
+    info = common.facts_info(_abs_path(facts_path))
+    if not info["exists"]:
+        errors.append(f"facts pack not found: {facts_path}")
+        return
+    if info["actual_hash"] != str(declared_hash):
+        errors.append("facts pack changed after the envelope was built; re-freeze and "
+                      "rebuild the envelope")
+
+
+def check_test_refs(env, result, errors, warnings):
+    """Evidence exists -> the result must quote a log line the envelope summary lacks."""
+    evidence = env.get("test_evidence") or []
+    refs = result.get("test_refs")
+    if not evidence:
+        if refs:
+            warnings.append("test_refs present without test_evidence in the envelope")
+        return
+    if not isinstance(refs, list) or not refs:
+        errors.append("$.test_refs: the envelope carries test evidence; cite at least one "
+                      "entry in test_refs")
+        return
+    by_id = {str(item.get("id")): item for item in evidence if isinstance(item, dict)}
+    for index, ref in enumerate(refs):
+        path = f"$.test_refs[{index}]"
+        if not isinstance(ref, dict):
+            errors.append(f"{path}: expected an object")
+            continue
+        ref_id = str(ref.get("id") or "")
+        item = by_id.get(ref_id)
+        if item is None:
+            errors.append(f"{path}: unknown evidence id {ref_id!r}")
+            continue
+        if str(ref.get("command") or "") != str(item.get("command") or ""):
+            errors.append(f"{path}.command: does not match evidence {ref_id}")
+        if ref.get("exit_code") != item.get("exit_code"):
+            errors.append(f"{path}.exit_code: {ref.get('exit_code')!r} != "
+                          f"evidence {item.get('exit_code')!r}")
+        if str(ref.get("log_sha256") or "") != str(item.get("log_sha256") or ""):
+            errors.append(f"{path}.log_sha256: does not match evidence {ref_id}")
+        observed = str(ref.get("observed") or "")
+        if len(observed) < 20:
+            errors.append(f"{path}.observed: needs at least 20 characters from the log")
+            continue
+        log_path = _abs_path(item.get("log_path"))
+        try:
+            with open(log_path, encoding="utf-8-sig", errors="replace") as fh:
+                log_text = fh.read()
+        except OSError:
+            errors.append(f"{path}: evidence log not readable: {item.get('log_path')}")
+            continue
+        if observed not in log_text:
+            errors.append(f"{path}.observed: the excerpt is not in the evidence log")
+            continue
+        summary = str(item.get("summary") or "")
+        command = str(item.get("command") or "")
+        if observed in summary or observed in command:
+            errors.append(f"{path}.observed: the excerpt is already in the envelope summary; "
+                          f"quote a line that only exists in the log")
 
 
 def validate_files(result_path, schema_path=DEFAULT_SCHEMA, envelope_path=None):
@@ -134,6 +271,8 @@ def validate_files(result_path, schema_path=DEFAULT_SCHEMA, envelope_path=None):
         missing = [u for u in wanted if u not in seen]
         if missing:
             errors.append(f"$.units_seen: envelope units not reported as seen: {missing}")
+        check_facts(env, result, errors)
+        check_test_refs(env, result, errors, warnings)
 
     findings = result.get("findings") if isinstance(result, dict) else None
     if isinstance(findings, list):

@@ -51,8 +51,24 @@ try:
     import reap_turns
 except Exception:  # noqa: BLE001
     reap_turns = None
+try:
+    import gate_common as common
+except Exception:  # noqa: BLE001
+    common = None
+try:
+    import plan_gate
+except Exception:  # noqa: BLE001
+    plan_gate = None
+try:
+    import review_budget
+except Exception:  # noqa: BLE001
+    review_budget = None
+try:
+    from validate_result import load_envelope
+except Exception:  # noqa: BLE001
+    load_envelope = None
 
-SKILL_VERSION = "1.6.0"
+SKILL_VERSION = "2.2.0"
 CALL_DIR = os.path.join("_work", "calls")
 
 
@@ -231,6 +247,65 @@ def contract_info():
     }
 
 
+REVIEW_ROLES = ("review", "plan-review")
+
+
+def resolve_role(args):
+    """A call with no semantic role is production: the safe default is the gate."""
+    if args.probe:
+        return "probe", "forced"
+    if args.role:
+        return args.role, "explicit"
+    return ("review" if args.schema else "produce"), "inferred"
+
+
+def workspace_guard(project):
+    """Return an error string when the pin belongs to another path/disk."""
+    if not common:
+        return None
+    pin = common.load_pin(project)
+    if not pin or not pin.get("workspace"):
+        return None
+    problems = common.identity_mismatches(pin, project)
+    return "; ".join(problems) if problems else None
+
+
+def facts_guard(envelope_path):
+    """Rehash the facts pack named by the envelope right before spending quota."""
+    if not envelope_path:
+        return None
+    if not (load_envelope and common):
+        return "validator/facts helpers unavailable"
+    try:
+        env = load_envelope(envelope_path)
+    except (OSError, ValueError) as exc:
+        return f"cannot read envelope: {exc}"
+    version = str(env.get("envelope_version") or "")
+    facts_path = env.get("facts_path")
+    declared = env.get("facts_hash")
+    if version == "2" and (not facts_path or not declared):
+        return "a v2 envelope must carry facts_path and facts_hash"
+    if not facts_path:
+        return None
+    path = facts_path if os.path.isabs(str(facts_path)) else os.path.abspath(str(facts_path))
+    info = common.facts_info(path)
+    if not info["exists"]:
+        return f"facts pack not found: {path}"
+    if str(declared) != info["actual_hash"]:
+        return (f"facts pack changed after the envelope was built ({path}); re-freeze and "
+                f"rebuild the envelope")
+    return None
+
+
+def plan_guard(project):
+    if not plan_gate:
+        return "plan_gate helper unavailable"
+    code, report = plan_gate.check_plan(project)
+    if code == 0:
+        return None
+    return f"plan gate blocked ({code}): {report.get('message')}"
+
+
 def main():
     ap = argparse.ArgumentParser(description="single entry point for Codex calls")
     src = ap.add_mutually_exclusive_group(required=True)
@@ -238,6 +313,19 @@ def main():
     src.add_argument("--prompt-file", help="file with the prompt (preferred)")
     ap.add_argument("--cd", default=os.getcwd())
     ap.add_argument("--request-id", default=None)
+    ap.add_argument("--role", default=None,
+                    choices=("plan", "produce", "review", "plan-review", "probe"),
+                    help="semantic call role; omitted = review if --schema else produce")
+    ap.add_argument("--milestone", default=None,
+                    help="review milestone (mandatory for review/plan-review)")
+    ap.add_argument("--work-package", default=None,
+                    help="work package id from the reviewed plan (produce)")
+    ap.add_argument("--produce-artifact", default=None,
+                    help="path of the artifact this produce call is expected to create")
+    ap.add_argument("--why-unclosed", default=None,
+                    help="why the previous two review rounds did not close (round 3+)")
+    ap.add_argument("--budget-change", default=None,
+                    help="one-off reason for exceeding the review-call budget")
     ap.add_argument("--model", default=None,
                     help="default: model from ~/.codex/config.toml")
     ap.add_argument("--effort", default=None,
@@ -259,6 +347,62 @@ def main():
     ap.add_argument("--no-ledger", action="store_true")
     args = ap.parse_args()
 
+    project = os.path.abspath(os.getcwd())
+    role, role_source = resolve_role(args)
+
+    identity_problem = workspace_guard(project)
+    if identity_problem:
+        print(f"[FAIL] workspace identity mismatch: {identity_problem}", file=sys.stderr)
+        print("       re-pin with `python scripts/session.py pin --force` in this root",
+              file=sys.stderr)
+        return 2
+
+    env_info = {}
+    if args.envelope:
+        if not os.path.isfile(args.envelope):
+            print(f"[FAIL] envelope not found: {args.envelope}", file=sys.stderr)
+            return 2
+        env_info = load_envelope(args.envelope) if load_envelope else {}
+
+    if role in REVIEW_ROLES:
+        missing = [flag for flag, value in (("--schema", args.schema),
+                                            ("--envelope", args.envelope),
+                                            ("--result-path", args.result_path),
+                                            ("--milestone", args.milestone)) if not value]
+        if missing:
+            print(f"[FAIL] a {role} call needs {', '.join(missing)}; a review must be "
+                  f"adoptable, not just text", file=sys.stderr)
+            return 2
+        if args.sandbox != "read-only":
+            print("[FAIL] a review call must run --sandbox read-only (zero-write)", file=sys.stderr)
+            return 2
+        problem = facts_guard(args.envelope)
+        if problem:
+            print(f"[FAIL] {problem}", file=sys.stderr)
+            return 2
+    if role == "produce":
+        if not args.work_package:
+            print("[FAIL] a produce call needs --work-package from the reviewed plan",
+                  file=sys.stderr)
+            return 2
+        problem = plan_guard(project)
+        if problem:
+            print(f"[FAIL] {problem}", file=sys.stderr)
+            return 2
+    if role == "probe":
+        forbidden = [flag for flag, value in (("--output", args.output),
+                                             ("--result-path", args.result_path),
+                                             ("--schema", args.schema),
+                                             ("--envelope", args.envelope),
+                                             ("--work-package", args.work_package),
+                                             ("--produce-artifact", args.produce_artifact))
+                     if value]
+        if forbidden:
+            print(f"[FAIL] a probe call is text-only and cannot use "
+                  f"{', '.join(forbidden)}; use --role produce (with a reviewed plan) or "
+                  f"--role review", file=sys.stderr)
+            return 2
+
     codex = resolve_codex()
     if not codex:
         print("[FAIL] codex.exe not found under %LOCALAPPDATA%\\OpenAI\\Codex\\bin\\*\\",
@@ -277,6 +421,13 @@ def main():
         return 2
 
     request_id = args.request_id or new_request_id()
+    env_request = str(env_info.get("request_id") or "").strip() if env_info else ""
+    if role in REVIEW_ROLES and env_request:
+        if args.request_id and args.request_id != env_request:
+            print(f"[FAIL] --request-id {args.request_id} does not match the envelope "
+                  f"request_id {env_request}", file=sys.stderr)
+            return 2
+        request_id = env_request
     os.makedirs(args.calls_dir, exist_ok=True)
     events_path = os.path.join(args.calls_dir, f"{request_id}.events.jsonl")
     record_path = os.path.join(args.calls_dir, f"{request_id}.json")
@@ -314,17 +465,42 @@ def main():
                 print(f"[FAIL] cannot derive strict schema: {exc}", file=sys.stderr)
                 return 2
         cmd += ["--output-schema", codex_schema]
-    if args.probe:
+    if args.probe or role == "probe":
         cmd += ["--ephemeral"]
     feed_prompt = len(prompt) > 6000
     if not feed_prompt:
         cmd.append(prompt)
 
+    budget_info = None
+    reserved = False
+    if role in REVIEW_ROLES:
+        if not review_budget:
+            print("[FAIL] review_budget helper unavailable", file=sys.stderr)
+            return 2
+        code, budget_info = review_budget.preflight(
+            project, args.milestone, role, request_id, args.why_unclosed,
+            args.budget_change)
+        if code != 0:
+            print(f"[FAIL] review budget: {budget_info.get('message')}", file=sys.stderr)
+            return 2
+        reserved = True
+        print(f"[run] review reservation {args.milestone}: "
+              f"{budget_info.get('prior_attempts')}/{budget_info.get('review_calls')} prior "
+              f"calls, {budget_info.get('prior_minutes')}/"
+              f"{budget_info.get('review_minutes')} prior minutes", file=sys.stderr)
+
+    envelope_sha = common.sha256_file(args.envelope) if (common and args.envelope) else None
+    artifact_path = (env_info or {}).get("artifact")
+    artifact_hash = (env_info or {}).get("version_hash")
+    produce_artifact = args.produce_artifact
+    if produce_artifact:
+        produce_artifact = os.path.abspath(produce_artifact)
+
     before = quota_snapshot()
     started = time.time()
     started_iso = datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds")
-    print(f"[run] {request_id} model={model} effort={effort} sandbox={args.sandbox}"
-          f"{' ephemeral(PROBE)' if args.probe else ''}", file=sys.stderr)
+    print(f"[run] {request_id} role={role} model={model} effort={effort} sandbox={args.sandbox}"
+          f"{' ephemeral(PROBE)' if args.probe or role == 'probe' else ''}", file=sys.stderr)
     print(f"[run] quota before: {before.get('used')}% used "
           f"(tier {before.get('tier')}, source {before.get('source')})", file=sys.stderr)
 
@@ -342,7 +518,7 @@ def main():
         status = "incomplete"
 
     cleanup = None
-    if status in ("timeout", "failed", "incomplete") and not args.probe:
+    if status in ("timeout", "failed", "incomplete") and not (args.probe or role == "probe"):
         cleanup = close_turn(thread_id, started, os.path.dirname(os.path.abspath(record_path)))
 
     # Result capture + contract check (BUG-1 / BUG-3): the reviewer writes nothing,
@@ -374,16 +550,39 @@ def main():
     if not args.no_ledger and quota_mod:
         try:
             delta_text = f"{delta:+.1f}pt" if delta is not None else "delta ?"
-            note = f"{request_id} {status} {before.get('used')}->{after.get('used')}% {delta_text}"
+            prefix = [f"role={role}"]
+            if args.milestone:
+                prefix.append(f"M={args.milestone}")
+            if args.work_package:
+                prefix.append(f"WP={args.work_package}")
+            note = " ".join(prefix + [f"{request_id} {status} {before.get('used')}->"
+                                      f"{after.get('used')}% {delta_text}"])
+            note = note.replace("|", "/")
             ledger_path = quota_mod.append_ledger(
                 args.ledger, dict(after, now=finished_iso), note, after.get("tier"))
         except Exception as exc:  # noqa: BLE001
             print(f"[WARN] ledger append failed: {exc}", file=sys.stderr)
 
+    result_hash = None
+    if args.result_path and os.path.isfile(args.result_path):
+        result_hash = common.sha256_file(args.result_path) if common else None
+    produced_hash = None
+    if produce_artifact and os.path.isfile(produce_artifact):
+        produced_hash = common.sha256_file(produce_artifact) if common else None
+    workspace = common.workspace_identity(project) if common else None
     record = {
         "request_id": request_id,
+        "protocol_version": 2,
         "status": status,
-        "ephemeral": bool(args.probe),
+        "ephemeral": bool(args.probe or role == "probe"),
+        "role": role,
+        "role_source": role_source,
+        "milestone": args.milestone,
+        "work_package": args.work_package,
+        "produce_artifact": produce_artifact,
+        "produce_artifact_hash": produced_hash,
+        "routing_tier": before.get("tier"),
+        "tier_source": "quota" if before.get("tier") else "unavailable",
         "started_at": started_iso,
         "finished_at": finished_iso,
         "duration_s": round(time.time() - started, 1),
@@ -393,11 +592,18 @@ def main():
         "sandbox": args.sandbox,
         "codex": {"path": codex, "version": codex_version(codex)},
         "contract": contract,
+        "workspace": workspace,
         "thread_id": thread_id,
         "rollout_path": find_rollout(thread_id),
         "events_path": os.path.abspath(events_path),
         "output_path": args.output,
         "result_path": args.result_path,
+        "result_sha256": result_hash,
+        "envelope_path": os.path.abspath(args.envelope) if args.envelope else None,
+        "envelope_sha256": envelope_sha,
+        "artifact": artifact_path,
+        "artifact_sha256": artifact_hash,
+        "budget": budget_info,
         "schema_path": os.path.abspath(args.schema) if args.schema else None,
         "codex_schema_path": codex_schema,
         "schema_valid": schema_valid,
@@ -414,6 +620,8 @@ def main():
     }
     with open(record_path, "w", encoding="utf-8") as fh:
         json.dump(record, fh, ensure_ascii=False, indent=2)
+    if reserved and review_budget:
+        review_budget.finalize(project, request_id)
     print(json.dumps(record, ensure_ascii=False))
     print(f"[run] {status} in {record['duration_s']}s, thread {thread_id}, "
           f"quota {before.get('used')}->{after.get('used')}% ({delta}), record {record_path}",

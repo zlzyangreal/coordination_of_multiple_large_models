@@ -22,6 +22,14 @@
 | Contract changed mid-session | governance | keep executing the pinned version; log the deviation; delivery states "pinned vX, repo vY" |
 | Skill dropped mid-session | defect | status line missing → declare it immediately, re-read, redo the skipped gate; postmortem question |
 | Budget treated as a constraint | process | expect a reviewer will litigate it; budget overrun is `notice`, fix the facts pack split |
+| Production dispatched without a reviewed plan | blocked | `plan_gate.py` exit 3/4/5/6; review the plan, or record a deviation — there is no production waiver |
+| Review round 3 without an answer | blocked | `--why-unclosed` required; write why rounds 1-2 did not close before spending |
+| Review budget exceeded | process | one-off `--budget-change`, or `review_budget.py raise` which bumps the facts pack; both log an event |
+| Facts pack stale or unversioned | blocked | `facts_pack.py check` exits 3; `bump --reason` or re-freeze before building a review envelope |
+| Evidence ignored by the review | invalid | `test_refs` must cite the log hash and a verbatim excerpt absent from the summary; the log is a review unit |
+| Workspace identity mismatch | blocked | the pin names another root/disk (or is legacy): `session.py pin --force`; never read the other `_work` |
+| S/A delivery with no GPT production | blocked | `review_budget.py deliver` exit 5; produce a plan work package or record a stored user approval |
+| Probe used as production | defect | `--role probe` is text-only and never adopted; rerun as `--role produce` after the plan gate |
 | Unusable model output | quality | fix facts pack / narrow scope / change model; never ship as-is |
 
 ## Artifact safety

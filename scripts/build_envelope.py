@@ -37,10 +37,14 @@ if hasattr(sys.stdout, "reconfigure"):
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
+import facts_pack  # noqa: E402
+import gate_common as common  # noqa: E402
 
 SKILL = os.path.abspath(os.path.join(HERE, "..", "SKILL.md"))
 SCHEMA = os.path.abspath(os.path.join(HERE, "..", "assets", "result.schema.json"))
 PIN = os.path.join("_work", "skill_pin.json")
+FACTS = os.path.join("_work", "facts_pack.md")
+EVIDENCE_FIELDS = ("id", "command", "exit_code", "log_path", "log_sha256", "summary")
 LEDGER_HEADER = (
     "# review ledger\n\n"
     "| id | round | where | status | reason | owner | budget_change |\n"
@@ -188,6 +192,45 @@ def probe_writable(directory):
         return False
 
 
+def load_test_evidence(paths, project="."):
+    """Load test_evidence JSON files and verify their logs; returns (records, error)."""
+    records, seen = [], set()
+    for path in paths:
+        record = common.read_json(path)
+        if not isinstance(record, dict):
+            return None, f"cannot read test evidence: {path}"
+        missing = [field for field in EVIDENCE_FIELDS if not record.get(field)
+                   and field != "exit_code"]
+        if missing:
+            return None, f"{path} is missing {', '.join(missing)}"
+        name = str(record["id"]).strip()
+        if not name or name in seen:
+            return None, f"duplicate or empty evidence id in {path}"
+        seen.add(name)
+        log = str(record["log_path"])
+        log_abs = log if os.path.isabs(log) else os.path.abspath(os.path.join(project, log))
+        if not os.path.isfile(log_abs):
+            candidate = os.path.join(os.path.dirname(os.path.abspath(path)), os.path.basename(log))
+            if os.path.isfile(candidate):
+                log_abs = candidate
+            else:
+                return None, f"evidence log not found: {log_abs}"
+        if common.sha256_file(log_abs) != str(record["log_sha256"]):
+            return None, f"evidence log changed since it was recorded: {log}"
+        if not isinstance(record.get("exit_code"), int):
+            return None, f"{path} has a non-integer exit_code"
+        records.append(dict(record, log_path=os.path.relpath(log_abs, project)
+                            .replace(os.sep, "/"), _log_abs=log_abs))
+    return records, None
+
+
+def producer_default():
+    planner = common.read_json(os.path.join("_work", "plan", "planner.json"), {})
+    if isinstance(planner, dict) and planner.get("planner"):
+        return str(planner["planner"])
+    return "dsh:auto"
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--artifact", required=True, help="file or directory the review covers")
@@ -205,6 +248,12 @@ def main():
                     help="runner (default) = reviewer writes nothing, -o captures the result")
     ap.add_argument("--schema", default=SCHEMA)
     ap.add_argument("--scope", default="")
+    ap.add_argument("--facts", default=FACTS,
+                    help="versioned facts pack (mandatory; see assets/facts-pack.example.md)")
+    ap.add_argument("--producer", default=None,
+                    help="producing model id (default: planner.json or dsh:auto)")
+    ap.add_argument("--test-evidence", action="append", default=[],
+                    help="JSON written by test_evidence.py; repeatable")
     ap.add_argument("--review-input", default=None,
                     help="the exact input the reviewer reads (diff, dump, render list); hash to rounds.md")
     args = ap.parse_args()
@@ -215,6 +264,27 @@ def main():
         return 2
     if not os.path.isfile(args.schema):
         print(f"[FAIL] schema not found: {os.path.abspath(args.schema)}")
+        return 2
+
+    project = os.getcwd()
+    pin = common.load_pin(project)
+    if pin and pin.get("workspace"):
+        problems = common.identity_mismatches(pin, project)
+        if problems:
+            print("[FAIL] workspace identity mismatch: " + "; ".join(problems))
+            print("       re-pin before building an envelope; this _work belongs elsewhere")
+            return 2
+
+    facts_path = os.path.abspath(args.facts)
+    facts_code, facts_message, facts = facts_pack.check(facts_path)
+    if facts_code != 0:
+        print(f"[FAIL] facts pack: {facts_message}")
+        print("       create one from assets/facts-pack.example.md, then `facts_pack.py freeze`")
+        return 2
+
+    evidence, error = load_test_evidence(args.test_evidence, project)
+    if error:
+        print(f"[FAIL] {error}")
         return 2
 
     ledger = os.path.abspath(args.ledger)
@@ -239,6 +309,13 @@ def main():
     units = load_units(args)
     if units is None:
         return 2
+    for record in evidence:
+        unit_id = f"evidence:{record['id']}"
+        if any(unit["id"] == unit_id for unit in units):
+            print(f"[FAIL] evidence unit id already used: {unit_id}")
+            return 2
+        units.append({"id": unit_id, "kind": "log", "locator": record["log_path"],
+                      "expected": f"test log {record['id']}"})
 
     out = os.path.abspath(args.out)
     payload = os.path.abspath(args.payload) if args.payload else \
@@ -256,14 +333,21 @@ def main():
         version_hash, file_count = tree_hash(artifact)
     else:
         version_hash, file_count = sha256(artifact), 1
+    producer = args.producer or producer_default()
 
     lines = [
         f"request_id: {rid}",
+        f"envelope_version: 2",
         f"skill_version: {version}",
         f"skill_pinned_at: {pinned_at or 'not-pinned'}",
+        f"producer: {producer}",
         f"artifact: {artifact}",
         f"version_hash: {version_hash}",
         f"artifact_mtime: {mtime_iso(artifact)}",
+        f"facts_path: {posix(facts_path)}",
+        f"facts_version: {facts['version']}",
+        f"facts_hash: {facts['declared_hash']}",
+        f"facts_frozen_at: {facts['frozen_at']}",
         f"artifact_access: {args.artifact_access}",
         f"result_capture: {args.capture}",
         f"output_path: {posix(payload)}",
@@ -281,6 +365,20 @@ def main():
         lines.append("units: []")
     lines.append(f'scope: "{args.scope}"')
     lines += ["acceptance:", '  - ""']
+    if evidence:
+        lines.append("test_evidence:")
+        for record in evidence:
+            lines += [
+                f"  - id: {record['id']}",
+                f"    command: {json.dumps(record['command'], ensure_ascii=False)}",
+                f"    exit_code: {record['exit_code']}",
+                f"    at: {record.get('finished_at') or record.get('started_at') or ''}",
+                f"    log_path: {record['log_path']}",
+                f"    log_sha256: {record['log_sha256']}",
+                f"    summary: {json.dumps(record.get('summary') or '', ensure_ascii=False)}",
+            ]
+    else:
+        lines.append("test_evidence: []")
     if closed:
         lines.append("prior_findings:")
         for row in closed:

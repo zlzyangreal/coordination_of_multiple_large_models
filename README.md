@@ -3,8 +3,9 @@
 用于 **2 个及以上大模型协作** 的调度与对接：谁负责、怎么交接、评审结论怎么判断可信、出错怎么退。只管协作机制——代码、文档、数据、方案都适用；代码风格、写作、排版这些领域规则属于项目自己的事实包与 DoD，不写进这里。
 
 - 仓库：<https://github.com/zlzyangreal/coordination_of_multiple_large_models>
-- 版本：2.1.0（2026-10-27）
-- 本版为**大版本**：接入 [dsh-our-free-model](https://github.com/Ebony-Vinyl/dsh-our-free-model) 的多渠道模型能力（76 家注册表、三线协议、账号/API Key/自定义地址/本地模型），并新增"任务开始扫清单、用户同意才入队"的团队审批流程；原有 dsh + codex 两条保护通道不变。
+- 版本：2.2.0（2026-10-28）
+- 当前离线自测：221 项（mock providers，不联网）
+- 本版把 v2.1 的"流程约定"落成**可执行门禁**：方案评审门（`plan_gate.py`）、评审轮次/分钟预算（`review_budget.py`）、事实包版本与哈希（`facts_pack.py`）、评审测试证据（`test_evidence.py`）、GPT 生产核算与交付门、工作区身份 pin（`session.py`），以及发版一致性脚本（`check_docs.py` + `release.py`）。目标是把"先实现、再让另一个模型挑错"改成"方案先独立评审、评审有预算、结论有证据"。
 - 上一代：`多模型协作Spec.md` v2.4.1，已冻结，仅作留档
 
 ## 安装
@@ -41,32 +42,39 @@ git push
 ```
 coordination_of_multiple_large_models/
 ├── README.md            本文件（给人看）
-├── SKILL.md             入口：何时用、19 条硬规则、6 步流程（英文，给 Agent 读）
+├── SKILL.md             入口：何时用、26 条硬规则、7 步流程（英文，给 Agent 读）
 ├── references/
-│   ├── environment.md           环境检查、工具链、网络三查/Clash、权限
+│   ├── environment.md           环境检查、工具链、网络三查/Clash、权限、工作区身份
 │   ├── model-access.md          模型接入：三条车道、凭据、发现/验活、路由、故障与回退、边界
 │   ├── model-registry.md        模型登记与验活、路由、额度分档摘要
-│   ├── quota-routing.md         5h/7d 额度读取、分档、节奏、保底、成本校准
-│   ├── calling-gpt.md           调用入口、持久化、评审调用、可观测性、.ps1 编码、中断收尾
-│   ├── execution-and-gates.md   任务契约、任务板、事实包（约束/预算）、8 步流程、DoD、回归
-│   ├── handoff-protocol.md      零写盘评审、信封、结果 schema、来源标注、复核门
+│   ├── quota-routing.md         5h/7d 额度读取、分档、节奏、保底、成本校准、评审预算
+│   ├── calling-gpt.md           调用入口、角色、评审调用、可观测性、.ps1 编码、中断收尾
+│   ├── execution-and-gates.md   任务契约、任务板、事实包版本、8 步流程、DoD、回归
+│   ├── handoff-protocol.md      零写盘评审、信封、结果 schema、测试证据、方案评审门、复核门
 │   └── failure-and-artifacts.md 失败矩阵、快照与恢复、清理、上报
 ├── scripts/
-│   ├── check_env.py             一键环境自检（codex 路径/版本、进程、代理、可写、实时额度）
-│   ├── session.py               契约锚点：pin / check（漂移）/ status（状态行）/ note
-│   ├── run_gpt.py               唯一 GPT 调用入口：持久化、评审 schema 校验、前后额度、自动台账
+│   ├── check_env.py             一键环境自检（codex 路径/版本、进程、代理、可写、实时额度、pin 身份）
+│   ├── session.py               契约 + 根身份锚点：pin / check / status / identity / note
+│   ├── run_gpt.py               唯一 GPT 调用入口：角色、计划门、预算、facts 重哈希、schema 校验、台账
+│   ├── plan_gate.py             方案评审门：hash/mtime、信封、结果、调用记录、家族独立性
+│   ├── review_budget.py         评审轮次/分钟预算、原子预留、生产采纳、交付门
+│   ├── facts_pack.py            事实包版本/哈希：freeze / bump / check / show / set-budget
+│   ├── test_evidence.py         记录测试命令、退出码、日志与哈希，供评审信封引用
+│   ├── check_docs.py            版本/计数/触发词/规则号/旧路径/脚本/资产一致性
+│   ├── release.py               一条命令：检查 → 真实测试计数 → changelog → commit/tag/push
+│   ├── gate_common.py           门禁共享库：证据归一、家族解析、facts 哈希、事件日志
 │   ├── models.py                多平台模型接入 CLI：init/providers/add/key/account/list/discover/test/
-│   │                            use/route/chains/call/health/budget/doctor
+│   │                            use/route/chains/call/plan/health/budget/doctor
 │   ├── model_registry.py        内置 76 家提供商注册表 + provider/model 语法、端点、请求头
 │   ├── model_config.py          项目级配置/凭据存储（0600）/运行状态/掩码与脱敏/跨进程锁
 │   ├── model_http.py            三种线协议（chat/responses/messages）、列表探测、失败分类
 │   ├── model_route.py           模型清单、能力/额度/健康路由、家族独立性、降级链
 │   ├── quota.py                 实时额度（app-server）→ 档位 S/A/B/C/R/U → 分工与调用方式
-│   ├── validate_result.py       评审结果 JSON Schema + 回显 + 单元覆盖校验（拦截不合规结果）
+│   ├── validate_result.py       评审结果 schema + 回显 + 单元覆盖 + facts/test_refs 校验
 │   ├── schema_for_codex.py      把契约派生成 codex strict 模式的 schema（--output-schema 必须）
 │   ├── reap_turns.py            收尾卡在 inProgress 的回合（先备份、只改该状态）
-│   ├── build_envelope.py        生成请求信封（hash/mtime/units/prior_findings/schema 路径）
-│   └── selftest_models.py       模型层离线自测（本地 mock 提供商，不花额度、不联网）
+│   ├── build_envelope.py        生成请求信封（facts/evidence/units/prior_findings/schema 路径）
+│   └── selftest_models.py       模型 + 门禁离线自测（本地 mock 提供商，不花额度、不联网）
 └── assets/
     ├── envelope.example.yaml    信封示例（零写盘 + prior_findings）
     ├── result.schema.json        评审结果的结构约束
@@ -276,23 +284,37 @@ python scripts/quota.py --note "交稿前"                  # 往 _work/quota_le
 | 事实包把"规模上限"当硬约束审（页数、行数、PR 大小都是预算） | 事实包拆 `constraints`（违反即返工）与 `budgets`（超限只报 `notice`，不得作否决理由）；模板 `assets/facts-pack.example.md` |
 | 同一模型的草稿由它自己放行 | advisory draft 计入生产：对应 finding 标 `origin: advisory-derived`，不计入独立评审；只有单模型可用时，交付必须写"本轮评审非独立（同源）" |
 | 额度读取与台账没有执行点 | "一次 runner 调用 = 一批"；runner 每次自动写一行 `_work/quota_ledger.md`；每条用户消息读一次 live 额度 |
-| SKILL 可在会话内静默失效 | 每轮首行状态行：`SKILL v2.1.0 (pinned 19:36) \| quota 5h 78% / week 96% \| 阶段：…`；中断当场声明并补门；复盘固定问"本轮 skill 是否中断" |
+| SKILL 可在会话内静默失效 | 每轮首行状态行：`SKILL v2.2.0 (pinned 22:54, D:) \| quota 5h 78% / week 96% \| 阶段：…`；中断当场声明并补门；复盘固定问"本轮 skill 是否中断" |
 | 证据没绑定到实际被读的东西 | 评审实际读的派生件（diff / dump / 导出）在调用前立即生成，`build_envelope.py --review-input` 把 sha256(8)+mtime 记进 `_work/rounds.md`；未记录前交付不得声称"版本已绑定"（信封结构按决议暂不动） |
 
-一句话：v1.4.0 解决"怎么调用"，v1.5.0 解决"调用了算不算数"，v1.6.0 解决"换到代码/数据/方案也成立"。
+一句话：v1.4.0 解决"怎么调用"，v1.5.0 解决"调用了算不算数"，v1.6.0 解决"换到代码/数据/方案也成立"，v2.2.0 把这些约定变成**会拒绝的脚本**。
+
+## 可执行门禁（v2.2.0 起）
+
+| 门 | 命令 | 拒绝条件 |
+|---|---|---|
+| 方案评审门（G1） | `python scripts/plan_gate.py check --envelope _work/plan/env_plan.yaml --result _work/plan/plan.review.json` | 无评审（3）、方案改过（4）、high/medium 未闭环（5）、同族/家族不明（6）；**没有生产豁免** |
+| 评审预算（G2） | `python scripts/review_budget.py check --milestone M1` / `raise --to N` / `note-minutes` | 第 3 轮无 `--why-unclosed`（3）；超预算无 `--budget-change` 或 `raise`（4） |
+| 测试证据（C3） | `python scripts/test_evidence.py record --name tests -- python scripts/selftest_models.py` → `build_envelope.py --test-evidence ...` | 信封有证据但结果无 `test_refs`、日志哈希不符、或 observed 抄 summary（校验无效） |
+| 事实包版本（C4） | `python scripts/facts_pack.py freeze` / `bump --reason ...` / `check` | 未冻结、哈希过期（3）；信封/运行前/校验时重哈希不一致 |
+| 工作区身份（C5） | `python scripts/session.py pin` / `check` / `identity` | 路径/盘符/卷序列不符或旧 pin：exit 2，要求重新 pin；**不读另一个盘的同名 `_work`** |
+| GPT 生产与交付（C2） | `python scripts/review_budget.py adopt --request-id R --decision adopted --reason ...`；`deliver` | S/A 无 GPT 生产单元或未采纳/未落审批（5）；B/C/R/U 豁免；`probe` 永不计入 |
+| 发版一致性（C6） | `python scripts/check_docs.py --run-tests`；`python scripts/release.py --version X.Y.Z --note "..."` | 版本/计数/触发词/规则号/旧路径/未登记脚本任一不符；脏树/已存在 tag |
+
+一句话：**每个门都是一个退出码，不是一段提醒。** 门禁的共享证据在 `_work/calls/`、`_work/gates/events.jsonl`、`_work/evidence/` 与事实包里。
 
 ## 怎么用
 
-1. 开工：`python scripts/session.py pin`（锁契约版本）+ `python scripts/check_env.py --short-call`（确认出口，顺带打一行实时额度）+ `python scripts/models.py team scan`（把可用 Agent 列给用户，确认后才入队）。
-2. 每轮：首行 `python scripts/session.py status --stage <阶段>`；变了就跑 `session.py check`，记偏差但不切版本。
-3. 方案设计：`python scripts/models.py route --role plan` 看谁最适合（推理/设计/Agentic/编程评分），再 `python scripts/models.py plan --requirements <需求>` 产出 `_work/plan/plan.md`；**planner 不负责分任务**。
-4. 方案评审：把 `plan.md` 当作工件走独立评审门（`build_envelope.py` + `run_gpt.py`，或 `models.py call --role review --producer <planner>`），必须换一个家族审；审不过就返工方案。
-5. 任务分发：lead（dispatcher）根据已评审的方案建任务板、定 owner、拆调用；planner 不参与分配。
-6. 分工前：`python scripts/quota.py`，照它给的档位决定"谁生产、GPT 做什么、怎么拆调用"。
-7. 评审前：`python scripts/build_envelope.py --artifact <文件或目录> --out <yaml> --ledger <台账> --unit "api::src/api.py:40-90::handle_request"`，第一轮加 `--init-ledger`。
-8. 调用：`python scripts/run_gpt.py --prompt-file <brief> --request-id <编号> --sandbox read-only --schema assets/result.schema.json --envelope <yaml> --output <payload> --result-path <结果>`，不合 schema 会 exit 3。
-9. 收结论：`python scripts/validate_result.py --result <结果> --envelope <yaml>` 通过后再逐条回源验证，采纳/拒绝写进台账（被拒条目下轮自动进 `prior_findings`）。
-10. 结束：回报额度用量、调用统计、偏差、未闭环项，并回答"本轮 skill 是否中断"；临时文件清掉，快照每文件最多留 3 份。
+1. 开工：`python scripts/session.py pin`（锁契约版本 + 根身份）+ `python scripts/check_env.py --short-call`（确认出口与额度）+ `python scripts/models.py team scan`（把可用 Agent 列给用户，确认后才入队）。
+2. 每轮：首行 `python scripts/session.py status --stage <阶段>`；变了就跑 `session.py check`，记偏差但不切版本；路径/盘变了则必须 `pin --force` 后重做跳过的门。
+3. 方案设计：`python scripts/models.py route --role plan` 看谁最适合，再 `python scripts/models.py plan --requirements <需求>` 产出 `_work/plan/plan.md`（含 WP 表）；**planner 不负责分任务**。
+4. 方案评审：`build_envelope.py --artifact _work/plan/plan.md ...` + `run_gpt.py --role plan-review --milestone plan ...`，必须换一个家族；结果落到 `plan.review.json` 后跑 `python scripts/plan_gate.py check --envelope ... --result ...`，通过才可分发。同一里程碑最多 2 轮，第 3 轮要 `--why-unclosed`。
+5. 任务分发：lead（dispatcher）根据已评审方案建任务板、定 owner、拆调用；planner 不参与分配。事实包先 `facts_pack.py freeze`，范围/预算变了就 `bump`。
+6. 分工前：`python scripts/quota.py`，照它给的档位决定"谁生产、GPT 做什么、怎么拆调用"；S/A 至少安排一个 GPT 生产单元（`--role produce --work-package WPx --produce-artifact <路径>`）。
+7. 评审前：`python scripts/build_envelope.py --artifact <文件或目录> --out <yaml> --ledger <台账> --unit "api::src/api.py:40-90::handle_request" --test-evidence _work/evidence/tests.json`，第一轮加 `--init-ledger`。
+8. 调用：`python scripts/run_gpt.py --prompt-file <brief> --role review --milestone <M> --request-id <编号> --sandbox read-only --schema assets/result.schema.json --envelope <yaml> --output <payload> --result-path <结果>`；不合 schema、facts 过期或预算超限都会在调用前/后被拒。
+9. 收结论：`python scripts/validate_result.py --result <结果> --envelope <yaml>` 通过后再逐条回源验证；采纳/拒绝写进台账，GPT 生产单元用 `review_budget.py adopt` 落结论；交付前跑 `review_budget.py deliver`。
+10. 结束：`python scripts/check_docs.py --run-tests` + `python scripts/release.py --version <X.Y.Z> --note "..."`（本地可加 `--no-push`）；回报额度用量、调用统计、偏差、未闭环项，并回答"本轮 skill 是否中断"。
 
 ## 维护约定
 
@@ -305,6 +327,7 @@ python scripts/quota.py --note "交稿前"                  # 往 _work/quota_le
 
 | 版本 | 日期 | 变更 |
 |---|---|---|
+| 2.2.0 | 2026-10-28 | 可执行门禁：方案评审门（`plan_gate.py`：hash/mtime/信封/调用记录/家族）、评审轮次与分钟预算（`review_budget.py`：原子预留、第 3 轮 `--why-unclosed`、`raise`/一次性豁免、事件日志）、GPT 生产核算与交付门（S/A 至少一个 WP 产物 + 采纳结论）、测试证据（`test_evidence.py` + 信封 `test_evidence` + 结果 `test_refs` 日志原文校验）、事实包版本与哈希（`facts_pack.py`，构建/启动/校验三处重哈希）、工作区身份 pin（根路径/盘符/卷序列/git HEAD）、发版一致性（`check_docs.py --run-tests` + `release.py`）；`models.py call` 无 role 视为 produce 并过方案门，`probe` 仅文本；SKILL 增至 26 条硬规则。设计经过 4 轮独立 GPT 评审（最后一轮 0 findings、confidence high）；221 项离线自测 |
 | 2.1.0 | 2026-10-27 | 方案设计与任务分发分离：新增 `plan` 角色与 `models.py plan`，按 Reasoning/Design/Agentic/Coding 评分选 planner（可在 `overrides.<model>.scores` 覆盖），先独立评审方案再由 lead 分发；`call --role plan` 拒绝；dsh planner 由会话自己写；155 项离线自测 |
 | 2.0.0 | 2026-10-27 | 大版本：接入 dsh-our-free-model 的多渠道模型能力，并加入任务团队入队审批。多平台模型接入与统一管理：新增 `scripts/models.py`（init/providers/add/key/account/list/discover/test/use/route/chains/call/health/budget/doctor）、`model_registry.py`（内置 76 家提供商注册表 + id 语法）、`model_config.py`（项目级配置、0600 凭据库、状态与跨进程锁、脱敏）、`model_http.py`（chat/responses/messages 三线协议、失败分类）、`model_route.py`（清单、能力/额度/健康路由、家族独立性、降级链）与 `selftest_models.py`（136 项离线自测）；GPT 仍只走 `run_gpt.py`、DeepSeek 仍只走 dsh 会话，HTTP 直连这两族需显式 `allowProtectedFamily`；凭据按项目隔离、只读命令不执行取令牌命令；新增 `references/model-access.md`、`assets/providers.registry.json`（MIT，附 NOTICE）与 `assets/models.config.example.json`；任务开始先 `team scan` 经用户同意才入队（`team.json` 存在即开关）；SKILL 增加第 17~20 条硬规则 |
 | 1.6.0 | 2026-10-24 | 去特化：评审单元由"页"改为通用 `units`（文件 / 片段 / diff / 接口 / 单元格 / 页……），`page_map`/`pages_seen`/`title_confirmed` 改为 `units`/`units_seen`/`units_confirmed`；目录工件改用树哈希；DoD、事实包、环境、清理里的文档/排版专用表述移除；schema 强制与零写盘不变 |

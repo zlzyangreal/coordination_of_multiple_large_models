@@ -27,6 +27,9 @@ if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, HERE)
+import gate_common as common  # noqa: E402
+
 SKILL = os.path.abspath(os.path.join(HERE, "..", "SKILL.md"))
 PIN = os.path.join("_work", "skill_pin.json")
 ROUNDS = os.path.join("_work", "rounds.md")
@@ -59,16 +62,24 @@ def cmd_pin(args):
     existing = load_pin()
     if existing and not args.force:
         print(f"already pinned: v{existing['version']} at {existing['pinned_at']}")
+        problems = common.identity_mismatches(existing)
+        if problems:
+            print("[FAIL] this pin belongs to another workspace: " + "; ".join(problems))
+            print("       re-pin with --force before doing any work here")
         if (existing.get("version"), existing.get("mtime")) != (current["version"], current["mtime"]):
             print(f"repository now: v{current['version']} (mtime {current['mtime']}) - "
                   f"continuing on the pin; use --force to re-pin")
-        return 0
+        return 2 if problems else 0
     payload = dict(current)
     payload["pinned_at"] = datetime.now().astimezone().isoformat(timespec="seconds")
+    payload["workspace"] = common.workspace_identity(os.getcwd())
     os.makedirs(os.path.dirname(PIN), exist_ok=True)
     with open(PIN, "w", encoding="utf-8") as fh:
         json.dump(payload, fh, ensure_ascii=False, indent=2)
+    workspace = payload["workspace"]
     print(f"pinned: SKILL v{payload['version']} ({payload['updated']}) mtime {payload['mtime']}")
+    print(f"        workspace {workspace['root']} ({workspace['drive']}, "
+          f"volume {workspace['volume']})")
     print(f"        -> {os.path.abspath(PIN)}")
     return 0
 
@@ -80,10 +91,29 @@ def cmd_check(args):
         print("[WARN] no pin yet: run `session.py pin` at the start of the session")
         print(f"       repository: v{current['version']} mtime {current['mtime']}")
         return 2 if args.strict else 0
-    drift = (pin.get("version") != current["version"]) or \
-            (pin.get("mtime") != current["mtime"])
+    problems = common.identity_mismatches(pin)
     print(f"pinned : v{pin.get('version')} mtime {pin.get('mtime')} ({pin.get('pinned_at')})")
     print(f"current: v{current['version']} mtime {current['mtime']}")
+    workspace = pin.get("workspace") or {}
+    if problems:
+        print("[FAIL] workspace identity mismatch: " + "; ".join(problems))
+        print("       this _work/ belongs to another path or disk; do not read or merge it")
+        print("       re-pin with `python scripts/session.py pin --force` in the intended root")
+        return 2
+    print(f"workspace: {workspace.get('root')} ({workspace.get('drive')}, "
+          f"volume {workspace.get('volume')})")
+    pinned_skill = os.path.normcase(os.path.abspath(pin.get("skill_path") or ""))
+    current_skill = os.path.normcase(os.path.abspath(SKILL))
+    if pinned_skill and pinned_skill != current_skill:
+        print(f"[WARN] skill path changed: pinned {pin.get('skill_path')} -> current {SKILL}")
+        print("       re-pin if this is the intended installation")
+    current_ws = common.workspace_identity(os.getcwd())
+    if workspace.get("git_head") and current_ws.get("git_head") and \
+            workspace["git_head"] != current_ws["git_head"]:
+        print(f"[NOTE] commit drift: pinned {workspace['git_head'][:12]} -> "
+              f"current {current_ws['git_head'][:12]} (normal during delivery)")
+    drift = (pin.get("version") != current["version"]) or \
+            (pin.get("mtime") != current["mtime"])
     if drift:
         print(f"DEVIATION: contract updated to v{current['version']} - this session continues "
               f"on v{pin.get('version')}; record the deviation, do not switch mid-session")
@@ -93,7 +123,16 @@ def cmd_check(args):
 
 
 def cmd_status(args):
-    pin = load_pin() or read_contract()
+    pin = load_pin()
+    if pin:
+        version = pin.get("version")
+        pinned_at = pin.get("pinned_at")
+        drive = (pin.get("workspace") or {}).get("drive") or "?"
+        label = f"pinned {pinned_at[11:16]}, {drive}" if pinned_at else "unpinned"
+    else:
+        current = read_contract()
+        version = current["version"]
+        label = "unpinned"
     stage = args.stage or "未填"
     quota_text = "quota unknown"
     if not args.no_quota:
@@ -109,9 +148,20 @@ def cmd_status(args):
                 quota_text = f"quota 5h {q['remaining']:.0f}% / week {weekly}"
         except Exception:  # noqa: BLE001
             quota_text = "quota unreadable"
-    pinned_at = pin.get("pinned_at")
-    label = f"pinned {pinned_at[11:16]}" if pinned_at else "unpinned"
-    print(f"SKILL v{pin.get('version')} ({label}) | {quota_text} | 阶段：{stage}")
+    print(f"SKILL v{version} ({label}) | {quota_text} | 阶段：{stage}")
+    return 0
+
+
+def cmd_identity(args):
+    identity = common.workspace_identity(os.getcwd())
+    if args.json:
+        print(json.dumps(identity, ensure_ascii=False, indent=2))
+    else:
+        print(f"root   : {identity['root']}")
+        print(f"drive  : {identity['drive']}")
+        print(f"volume : {identity['volume']}")
+        print(f"git    : {identity['git_head'] or 'not a git repository'}")
+        print(f"host   : {identity['host']}")
     return 0
 
 
@@ -156,6 +206,9 @@ def main():
     s.add_argument("--stage", default="")
     s.add_argument("--no-quota", action="store_true")
     s.set_defaults(func=cmd_status)
+    i = sub.add_parser("identity", help="show the absolute root, drive, volume and git HEAD")
+    i.add_argument("--json", action="store_true")
+    i.set_defaults(func=cmd_identity)
     n = sub.add_parser("note")
     n.add_argument("--text", help="file whose sha256 + mtime belongs in the round log")
     n.add_argument("--message", help="free-text note instead of a file")

@@ -16,6 +16,8 @@ resolve to a `run_gpt.py` command (dry-run) and `dsh:*` must be refused.
 import hashlib
 import json
 import os
+import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -229,6 +231,7 @@ def main():
         extended_cases(env, project, port_a, port_b, port_c)
         team_cases(env, work, port_a, port_b)
         plan_cases(env, work, port_a, port_b)
+        gate_cases(env, work, port_a, port_b)
     finally:
         for server in (server_a, server_b, server_c):
             server.shutdown()
@@ -316,7 +319,7 @@ def cases(env, project, other, port_a, port_b, port_c):
           and plan.get("primary", {}).get("id") == "mock_a/mock-ok", out + err + out2 + err2)
     run(project, ["use", "review", "auto"], env)
 
-    code, out, err = run(project, ["call", "--model", "mock_a/mock-ok",
+    code, out, err = run(project, ["call", "--role", "probe", "--model", "mock_a/mock-ok",
                                    "--prompt", "hi", "--json"], env)
     result = json.loads(out) if code == 0 else {}
     check("a keyless completion succeeds",
@@ -325,14 +328,14 @@ def cases(env, project, other, port_a, port_b, port_c):
     check("every attempt is logged", os.path.isfile(calls_path)
           and "mock_a/mock-ok" in open(calls_path, encoding="utf-8").read())
 
-    code, out, err = run(project, ["call", "--chain", "r429", "--prompt", "hi", "--json"], env)
+    code, out, err = run(project, ["call", "--role", "probe", "--chain", "r429", "--prompt", "hi", "--json"], env)
     result = json.loads(out) if code == 0 else {}
     attempts = result.get("attempts") or []
     check("a 429 falls over to the next chain link",
           code == 0 and "hello from mock A" in result.get("text", "")
           and attempts and attempts[0].get("kind") == "rate_limit", out + err)
 
-    code, out, err = run(project, ["call", "--chain", "bad400", "--prompt", "hi", "--json"], env)
+    code, out, err = run(project, ["call", "--role", "probe", "--chain", "bad400", "--prompt", "hi", "--json"], env)
     check("a 400 is a request defect and does not fall over", code == 4, out + err)
 
     # Round-5: a named chain is executed by a script, so a dsh link is dropped at
@@ -352,7 +355,7 @@ def cases(env, project, other, port_a, port_b, port_c):
     config["defaults"]["retryTransient"] = 2
     with open(config_path, "w", encoding="utf-8") as fh:
         json.dump(config, fh, ensure_ascii=False, indent=2)
-    code, out, err = run(project, ["call", "--model", "mock_a/mock-flaky",
+    code, out, err = run(project, ["call", "--role", "probe", "--model", "mock_a/mock-flaky",
                                    "--prompt", "hi", "--json"], env)
     result = json.loads(out) if code == 0 else {}
     attempts = result.get("attempts") or []
@@ -360,19 +363,19 @@ def cases(env, project, other, port_a, port_b, port_c):
           code == 0 and len(attempts) == 3
           and "flaky recovered" in result.get("text", ""), out + err)
 
-    code, out, err = run(project, ["call", "--model", "mock_b/claude-mock",
+    code, out, err = run(project, ["call", "--role", "probe", "--model", "mock_b/claude-mock",
                                    "--prompt", "hi", "--json"], env)
     result = json.loads(out) if code == 0 else {}
     check("the Anthropic Messages wire works",
           code == 0 and result.get("text") == "anthropic ok", out + err)
 
-    code, out, err = run(project, ["call", "--model", "mock_c/resp-mock",
+    code, out, err = run(project, ["call", "--role", "probe", "--model", "mock_c/resp-mock",
                                    "--prompt", "hi", "--json"], env)
     result = json.loads(out) if code == 0 else {}
     check("the OpenAI Responses wire works",
           code == 0 and result.get("text") == "responses ok", out + err)
 
-    code, out, err = run(project, ["call", "--model", "mock_leak/claude-mock",
+    code, out, err = run(project, ["call", "--role", "probe", "--model", "mock_leak/claude-mock",
                                    "--prompt", "hi"], env)
     state_text = open(os.path.join(project, "_work", "models", "state.json"),
                       encoding="utf-8").read()
@@ -380,7 +383,7 @@ def cases(env, project, other, port_a, port_b, port_c):
           code == 5 and "sk-leak-SECRET-9999" not in (out + err + state_text),
           out + err)
 
-    code, out, err = run(project, ["call", "--model", "dsh:auto", "--prompt", "hi"], env)
+    code, out, err = run(project, ["call", "--role", "probe", "--model", "dsh:auto", "--prompt", "hi"], env)
     check("the dsh lane refuses a script call",
           code == 2 and "lead session" in (out + err), out + err)
 
@@ -393,7 +396,7 @@ def cases(env, project, other, port_a, port_b, port_c):
     config["providers"]["mock_c"]["limits"] = {"callsPerDay": 1}
     with open(config_path, "w", encoding="utf-8") as fh:
         json.dump(config, fh, ensure_ascii=False, indent=2)
-    code, out, err = run(project, ["call", "--model", "mock_c/resp-mock",
+    code, out, err = run(project, ["call", "--role", "probe", "--model", "mock_c/resp-mock",
                                    "--prompt", "hi"], env)
     check("a declared daily budget stops the next call", code == 3, out + err)
 
@@ -620,7 +623,7 @@ def extended_cases(env, project, port_a, port_b, port_c):
     check("a listing that echoes the key as a model id is redacted",
           code == 0 and "[redacted]" in out
           and "sk-leak-SECRET-9999" not in (out + err + state_text), out + err)
-    code, out, err = run(project, ["call", "--model", "mock_echo/echo-key",
+    code, out, err = run(project, ["call", "--role", "probe", "--model", "mock_echo/echo-key",
                                    "--prompt", "hi"], env)
     check("a successful answer that echoes the key is redacted",
           code == 0 and "sk-leak-SECRET-9999" not in (out + err), out + err)
@@ -713,7 +716,7 @@ def extended_cases(env, project, port_a, port_b, port_c):
     check("a pinned protected-family row is refused", code == 3, out + err)
 
     # R1-MODEL-COOLDOWN: a 429 cools that model only, and route sees it.
-    run(project, ["call", "--chain", "r429", "--prompt", "hi"], env)
+    run(project, ["call", "--role", "probe", "--chain", "r429", "--prompt", "hi"], env)
     code, out, err = run(project, ["list", "--json"], env)
     entries = {entry["id"]: entry for entry in json.loads(out)} if code == 0 else {}
     check("a model-level cooldown marks the model unusable",
@@ -723,7 +726,7 @@ def extended_cases(env, project, port_a, port_b, port_c):
           entries.get("mock_a/mock-ok", {}).get("usable") is True, out + err)
 
     # R1-HTTP-404: a wrong endpoint is a request defect, not a model miss.
-    code, out, err = run(project, ["call", "--model", "mock_404/x", "--prompt", "hi",
+    code, out, err = run(project, ["call", "--role", "probe", "--model", "mock_404/x", "--prompt", "hi",
                                    "--json"], env)
     result = json.loads(out) if out.strip().startswith("{") else {}
     check("an endpoint 404 is request-scoped and does not fall back",
@@ -735,7 +738,7 @@ def extended_cases(env, project, port_a, port_b, port_c):
         os.remove(marker)
     run(project, ["list"], env)
     check("list does not execute a credential command", not os.path.isfile(marker))
-    code, out, err = run(project, ["call", "--model", "mock_cmd/mock-ok",
+    code, out, err = run(project, ["call", "--role", "probe", "--model", "mock_cmd/mock-ok",
                                    "--prompt", "hi"], env)
     check("a call mints the command credential and succeeds",
           code == 0 and os.path.isfile(marker), out + err)
@@ -759,7 +762,7 @@ def extended_cases(env, project, port_a, port_b, port_c):
 
     # R1-RETRY-ZERO: zero retries means exactly one attempt.
     _patch_config(config_path, lambda cfg: cfg["defaults"].__setitem__("retryTransient", 0))
-    code, out, err = run(project, ["call", "--model", "mock_a/mock-500", "--prompt", "hi",
+    code, out, err = run(project, ["call", "--role", "probe", "--model", "mock_a/mock-500", "--prompt", "hi",
                                    "--json"], env)
     result = json.loads(out) if out.strip().startswith("{") else {}
     check("retryTransient=0 performs one attempt",
@@ -785,7 +788,7 @@ def extended_cases(env, project, port_a, port_b, port_c):
                  "print(json.dumps({'final_message':'fake ok','usage':"
                  "{'input_tokens':1,'output_tokens':1}}))\n")
     env_fake = dict(env, COORD_RUN_GPT=fake, FAKE_RECORD=record_path)
-    code, out, err = run(project, ["call", "--model", "codex:auto", "--prompt", "hi",
+    code, out, err = run(project, ["call", "--role", "probe", "--model", "codex:auto", "--prompt", "hi",
                                    "--json"], env_fake)
     result = json.loads(out) if out.strip().startswith("{") else {}
     observed = json.load(open(record_path, encoding="utf-8")) \
@@ -796,7 +799,7 @@ def extended_cases(env, project, port_a, port_b, port_c):
     empty = os.path.join(fake_dir, "empty_runner.py")
     with open(empty, "w", encoding="utf-8") as fh:
         fh.write("import sys\nsys.exit(0)\n")
-    code, out, err = run(project, ["call", "--model", "codex:auto", "--prompt", "hi"],
+    code, out, err = run(project, ["call", "--role", "probe", "--model", "codex:auto", "--prompt", "hi"],
                          dict(env, COORD_RUN_GPT=empty))
     check("an empty codex payload is a failed attempt, not a success", code == 5,
           out + err)
@@ -810,10 +813,10 @@ def extended_cases(env, project, port_a, port_b, port_c):
     run(project, ["add-custom", "rot", "--base-url", base_b, "--format",
                   "anthropic-messages", "--auth", "apiKey", "--models", "claude-mock"], env)
     run(project, ["key", "set", "rot", "--from-env", "LEAK_KEY"], env)
-    code_bad, _, _ = run(project, ["call", "--model", "rot/claude-mock",
+    code_bad, _, _ = run(project, ["call", "--role", "probe", "--model", "rot/claude-mock",
                                    "--prompt", "hi"], env)
     run(project, ["key", "set", "rot", "--from-env", "TEST_KEY"], env)
-    code_good, out_good, err_good = run(project, ["call", "--model", "rot/claude-mock",
+    code_good, out_good, err_good = run(project, ["call", "--role", "probe", "--model", "rot/claude-mock",
                                                   "--prompt", "hi", "--json"], env)
     check("rotating a credential clears the auth cooldown",
           code_bad != 0 and code_good == 0
@@ -1290,6 +1293,576 @@ def plan_cases(env, work, port_a, port_b):
     code, out, err = run(project, ["plan", "--requirements", requirements,
                                    "--planner", "p_high/claude-mock", "--no-quota"], env)
     check("pinning an unapproved planner fails", code == 2, out + err)
+
+
+def gate_cases(env, work, port_a, port_b):
+    """v2.2 gates: plan review, budget, facts, evidence, production, identity, release."""
+    import check_docs  # noqa: PLC0415
+    import review_budget  # noqa: PLC0415
+
+    def script(project, name, args, extra_env=None):
+        done = subprocess.run([sys.executable, os.path.join(SKILL, "scripts", name)] + args,
+                              cwd=project, capture_output=True, text=True, encoding="utf-8",
+                              errors="replace", env=extra_env or env)
+        return done.returncode, done.stdout or "", done.stderr or ""
+
+    def write(path, text):
+        os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+        with open(path, "w", encoding="utf-8", newline="\n") as fh:
+            fh.write(text)
+
+    def write_json(path, data):
+        write(path, json.dumps(data, ensure_ascii=False, indent=2) + "\n")
+
+    def sha(path):
+        return hashlib.sha256(open(path, "rb").read()).hexdigest()
+
+    def mtime(path):
+        from datetime import datetime
+        return datetime.fromtimestamp(os.path.getmtime(path)).astimezone() \
+            .isoformat(timespec="seconds")
+
+    def facts_for(project, text=None):
+        body = text or (
+            "# Facts pack — gate fixture\n\n"
+            "## budgets\n\n"
+            "| budget | value | changed | reason |\n|---|---|---|---|\n"
+            "| review_calls | 2 per milestone | | default |\n"
+            "| review_minutes | 30 min | | default |\n")
+        write(os.path.join(project, "_work", "facts_pack.md"), body)
+        return script(project, "facts_pack.py", ["freeze"])
+
+    # ---------------------------------------------------------------- facts pack
+    facts_project = os.path.join(work, "facts-project")
+    os.makedirs(facts_project)
+    write(os.path.join(facts_project, "_work", "facts_pack.md"),
+          "# Facts\n\n## budgets\n\n| budget | value |\n|---|---|\n"
+          "| review_calls | 2 per milestone |\n| review_minutes | 30 min |\n")
+    code, out, err = script(facts_project, "facts_pack.py", ["check"])
+    check("facts_pack: an unversioned pack is refused", code == 3, out + err)
+    code, out, err = script(facts_project, "facts_pack.py", ["freeze"])
+    check("facts_pack: freeze writes version and hash", code == 0
+          and "facts_hash" in open(os.path.join(facts_project, "_work", "facts_pack.md"),
+                                   encoding="utf-8").read(), out + err)
+    code, out, err = script(facts_project, "facts_pack.py", ["check"])
+    check("facts_pack: a frozen pack checks clean", code == 0, out + err)
+    with open(os.path.join(facts_project, "_work", "facts_pack.md"), "a",
+              encoding="utf-8") as fh:
+        fh.write("\n- drifted line\n")
+    code, out, err = script(facts_project, "facts_pack.py", ["check"])
+    check("facts_pack: an edited body is stale", code == 3, out + err)
+    code, out, err = script(facts_project, "facts_pack.py",
+                            ["bump", "--reason", "scope added"])
+    check("facts_pack: bump increments the version and freezes", code == 0
+          and "v2" in out, out + err)
+    code, out, err = script(facts_project, "facts_pack.py", ["set-budget",
+                                                             "review_calls", "3",
+                                                             "--reason", "raise"])
+    check("facts_pack: set-budget edits the row and re-freezes", code == 0, out + err)
+    show = script(facts_project, "facts_pack.py", ["show", "--json"])[1]
+    info = json.loads(show) if show.strip().startswith("{") else {}
+    check("facts_pack: show reports the new budget", info.get("budgets", {})
+          .get("review_calls") == 3, show)
+    with open(os.path.join(facts_project, "_work", "facts_pack.md"), "a",
+              encoding="utf-8") as fh:
+        fh.write("facts_hash: deadbeef\n")
+    code, out, err = script(facts_project, "facts_pack.py", ["check"])
+    check("facts_pack: a duplicate hash header is malformed", code == 1, out + err)
+
+    # ---------------------------------------------------------------- test evidence
+    evidence_project = os.path.join(work, "evidence-project")
+    os.makedirs(evidence_project)
+    log = os.path.join(evidence_project, "_work", "sample.log")
+    write(log, "\n".join(f"line-{index:02d}-abcdefghijklmnop" for index in range(1, 26)) + "\n")
+    evidence = {
+        "id": "tests", "protocol_version": 2,
+        "command": "python run-tests.py", "argv": ["python", "run-tests.py"],
+        "cwd": evidence_project, "exit_code": 0, "timed_out": False,
+        "duration_s": 1.0, "started_at": "2026-10-28T23:00:00+08:00",
+        "finished_at": "2026-10-28T23:00:01+08:00", "artifacts": [],
+        "log_path": "_work/sample.log", "log_sha256": sha(log),
+        "stdout_sha256": sha(log),
+        "stderr_sha256": hashlib.sha256(b"").hexdigest(),
+        "summary": "\n".join(f"line-{index:02d}-abcdefghijklmnop" for index in range(6, 26)),
+    }
+    write_json(os.path.join(evidence_project, "_work", "evidence", "tests.json"), evidence)
+    code, out, err = script(evidence_project, "test_evidence.py",
+                            ["record", "--name", "smoke", "--", sys.executable, "-c",
+                             "print('evidence-ok')"])
+    check("test_evidence: records a passing command",
+          code == 0 and os.path.isfile(os.path.join(evidence_project, "_work", "evidence",
+                                                    "smoke.json")), out + err)
+    code, out, err = script(evidence_project, "test_evidence.py",
+                            ["record", "--name", "fail", "--", sys.executable, "-c",
+                             "import sys; sys.exit(7)"])
+    check("test_evidence: propagates a failing exit code", code == 7, out + err)
+
+    # ---------------------------------------------------------------- envelope + validator
+    facts_for(evidence_project)
+    plan_text = ("# Plan\n\n## Work packages\n\n| id | output | DoD |\n"
+                 "|---|---|---|\n| WP1 | out.txt | produce the output |\n")
+    write(os.path.join(evidence_project, "_work", "plan", "plan.md"), plan_text)
+    write(os.path.join(evidence_project, "_work", "plan", "review_ledger.md"),
+          "# review ledger\n\n| id | round | where | status | reason | owner | budget_change |\n"
+          "|---|---|---|---|---|---|---|\n")
+    code, out, err = script(evidence_project, "build_envelope.py", [
+        "--artifact", "_work/plan/plan.md", "--out", "_work/smoke/env.yaml",
+        "--ledger", "_work/plan/review_ledger.md",
+        "--unit", "plan::_work/plan/plan.md::work packages",
+        "--test-evidence", "_work/evidence/tests.json", "--scope", "test"])
+    check("envelope: facts + evidence build succeeds", code == 0, out + err)
+    envelope_text = open(os.path.join(evidence_project, "_work", "smoke", "env.yaml"),
+                         encoding="utf-8").read()
+    check("envelope: carries facts and evidence units",
+          "envelope_version: 2" in envelope_text and "facts_hash:" in envelope_text
+          and "evidence:tests" in envelope_text and "test_evidence:" in envelope_text,
+          envelope_text[:400])
+    env_info = {}
+    for line in envelope_text.splitlines():
+        match = re.match(r"^([A-Za-z_]+):\s*(.*)$", line)
+        if match and match.group(1) not in ("units", "test_evidence", "prior_findings"):
+            env_info[match.group(1)] = match.group(2).strip().strip('"')
+
+    def result_for(env_path, unit_ids, findings=None, refs=None):
+        text = open(env_path, encoding="utf-8").read()
+        values = {}
+        for line in text.splitlines():
+            match = re.match(r"^([A-Za-z_]+):\s*(.*)$", line)
+            if match:
+                values[match.group(1)] = match.group(2).strip().strip('"')
+        return {
+            "request_id": values["request_id"],
+            "artifact_hash": values["version_hash"],
+            "artifact_mtime": values["artifact_mtime"],
+            "units_seen": unit_ids,
+            "units_confirmed": [{"unit": unit, "observed": f"opened {unit}"}
+                                for unit in unit_ids],
+            "findings": findings or [],
+            "confidence": "high",
+            "facts_version": values.get("facts_version", ""),
+            "test_refs": refs or [],
+            "limitations": [],
+        }
+
+    result = result_for(os.path.join(evidence_project, "_work", "smoke", "env.yaml"),
+                        ["plan", "evidence:tests"],
+                        refs=[{"id": "tests", "command": evidence["command"],
+                               "exit_code": 0, "log_sha256": evidence["log_sha256"],
+                               "observed": "line-01-abcdefghijklmnop"}])
+    result_path = os.path.join(evidence_project, "_work", "smoke", "result.json")
+    write_json(result_path, result)
+    code, out, err = script(evidence_project, "validate_result.py", [
+        "--result", result_path, "--envelope", "_work/smoke/env.yaml"])
+    check("validator: a real log excerpt is accepted", code == 0, out + err)
+    result["test_refs"][0]["observed"] = "line-25"
+    write_json(result_path, result)
+    code, out, err = script(evidence_project, "validate_result.py", [
+        "--result", result_path, "--envelope", "_work/smoke/env.yaml"])
+    check("validator: an excerpt copied from the summary is rejected", code == 1, out + err)
+    result["test_refs"][0]["observed"] = "line-01-abcdefghijklmnop"
+    result["test_refs"] = []
+    write_json(result_path, result)
+    code, out, err = script(evidence_project, "validate_result.py", [
+        "--result", result_path, "--envelope", "_work/smoke/env.yaml"])
+    check("validator: evidence without test_refs is invalid", code == 1, out + err)
+    result["test_refs"] = [{"id": "tests", "command": evidence["command"],
+                            "exit_code": 0, "log_sha256": evidence["log_sha256"],
+                            "observed": "line-01-abcdefghijklmnop"}]
+    result["facts_version"] = "999"
+    write_json(result_path, result)
+    code, out, err = script(evidence_project, "validate_result.py", [
+        "--result", result_path, "--envelope", "_work/smoke/env.yaml"])
+    check("validator: a wrong facts_version is rejected", code == 1, out + err)
+    with open(os.path.join(evidence_project, "_work", "facts_pack.md"), "a",
+              encoding="utf-8") as fh:
+        fh.write("\n- post-build drift\n")
+    result["facts_version"] = "1"
+    write_json(result_path, result)
+    code, out, err = script(evidence_project, "validate_result.py", [
+        "--result", result_path, "--envelope", "_work/smoke/env.yaml"])
+    check("validator: a facts pack mutated after build is rejected", code == 1, out + err)
+
+    # ---------------------------------------------------------------- plan gate
+    gate_project = os.path.join(work, "gate-project")
+    os.makedirs(gate_project)
+    base_a = f"http://127.0.0.1:{port_a}/v1"
+    base_b = f"http://127.0.0.1:{port_b}/v1"
+    run(gate_project, ["init"], env)
+    run(gate_project, ["add-custom", "g_a", "--base-url", base_a, "--models",
+                       "mock-ok", "--auth", "none"], env)
+    run(gate_project, ["add-custom", "g_b", "--base-url", base_b, "--format",
+                       "anthropic-messages", "--models", "claude-mock",
+                       "--auth", "apiKey"], env)
+    run(gate_project, ["key", "set", "g_b", "--from-env", "TEST_KEY"], env)
+    config_path = os.path.join(gate_project, "_work", "models", "config.json")
+    _patch_config(config_path, lambda cfg: cfg["providers"]["g_a"].__setitem__(
+        "overrides", {"mock-ok": {"family": "gate_a"}}))
+    _patch_config(config_path, lambda cfg: cfg["providers"]["g_b"].__setitem__(
+        "overrides", {"claude-mock": {"family": "gate_b"}}))
+    facts_for(gate_project)
+    write(os.path.join(gate_project, "_work", "plan", "plan.md"), plan_text)
+    write(os.path.join(gate_project, "_work", "plan", "review_ledger.md"),
+          "# review ledger\n\n| id | round | where | status | reason | owner | budget_change |\n"
+          "|---|---|---|---|---|---|---|\n")
+    code, out, err = script(gate_project, "build_envelope.py", [
+        "--artifact", "_work/plan/plan.md", "--out", "_work/plan/env_plan.yaml",
+        "--ledger", "_work/plan/review_ledger.md",
+        "--unit", "plan::_work/plan/plan.md::work packages", "--scope", "plan review"])
+    check("plan gate: envelope builds", code == 0, out + err)
+
+    def make_plan_review(project, env_name, result_name, reviewer_model,
+                         protocol=True, contract="2.2.0"):
+        env_path = os.path.join(project, env_name)
+        text = open(env_path, encoding="utf-8").read()
+        values = {}
+        for line in text.splitlines():
+            match = re.match(r"^([A-Za-z_]+):\s*(.*)$", line)
+            if match:
+                values[match.group(1)] = match.group(2).strip().strip('"')
+        result = {
+            "request_id": values["request_id"],
+            "artifact_hash": values["version_hash"],
+            "artifact_mtime": values["artifact_mtime"],
+            "units_seen": ["plan"],
+            "units_confirmed": [{"unit": "plan", "observed": "work packages"}],
+            "findings": [], "confidence": "high", "limitations": [],
+            "facts_version": values.get("facts_version", ""),
+        }
+        result_path = os.path.join(project, result_name)
+        write_json(result_path, result)
+        call = {
+            "request_id": values["request_id"], "status": "ok", "ephemeral": False,
+            "schema_valid": True, "model": reviewer_model,
+            "contract": {"pinned": contract},
+            "envelope_path": os.path.abspath(env_path),
+            "envelope_sha256": sha(env_path),
+            "result_path": os.path.abspath(result_path),
+            "result_sha256": sha(result_path),
+            "artifact": os.path.abspath(os.path.join(project, "_work/plan/plan.md")),
+            "artifact_sha256": values["version_hash"],
+        }
+        if protocol:
+            call.update({"protocol_version": 2, "role": "plan-review"})
+        write_json(os.path.join(project, "_work", "calls",
+                                f"{values['request_id']}.json"), call)
+        return env_path, result_path, call
+
+    env_path, result_path, call = make_plan_review(
+        gate_project, "_work/plan/env_plan.yaml", "_work/plan/plan.review.json",
+        "g_b/claude-mock")
+    code, out, err = script(gate_project, "plan_gate.py", [
+        "check", "--envelope", "_work/plan/env_plan.yaml",
+        "--result", "_work/plan/plan.review.json"])
+    check("plan gate: reviewed plan with a different family passes", code == 0, out + err)
+    write(os.path.join(gate_project, "_work", "plan", "planner.json"),
+          json.dumps({"planner": "g_a/mock-ok", "requestId": "P1",
+                      "plan_sha256": sha(os.path.join(gate_project, "_work/plan/plan.md")),
+                      "plan_mtime": mtime(os.path.join(gate_project, "_work/plan/plan.md"))}))
+    write_json(os.path.join(gate_project, "_work", "calls", "P1.json"),
+               {"request_id": "P1", "status": "ok", "model": "g_a/mock-ok",
+                "contract": {"pinned": "2.2.0"}})
+    call["model"] = "g_a/mock-ok"
+    write_json(os.path.join(gate_project, "_work", "calls",
+                            f"{call['request_id']}.json"), call)
+    code, out, err = script(gate_project, "plan_gate.py", [
+        "check", "--envelope", "_work/plan/env_plan.yaml",
+        "--result", "_work/plan/plan.review.json"])
+    check("plan gate: the same family is refused", code == 6, out + err)
+    call["model"] = "g_b/claude-mock"
+    write_json(os.path.join(gate_project, "_work", "calls",
+                            f"{call['request_id']}.json"), call)
+    os.remove(os.path.join(gate_project, "_work", "plan", "planner.json"))
+    os.remove(os.path.join(gate_project, "_work", "calls", "P1.json"))
+    code, out, err = script(gate_project, "plan_gate.py", [
+        "check", "--envelope", "_work/plan/env_plan.yaml",
+        "--result", "_work/plan/plan.review.json"])
+    check("plan gate: a reviewed plan passes again", code == 0, out + err)
+    os.remove(os.path.join(gate_project, "_work", "calls", f"{call['request_id']}.json"))
+    code, out, err = script(gate_project, "plan_gate.py", [
+        "check", "--envelope", "_work/plan/env_plan.yaml",
+        "--result", "_work/plan/plan.review.json"])
+    check("plan gate: a missing call record is not evidence", code == 3, out + err)
+    write_json(os.path.join(gate_project, "_work", "calls",
+                            f"{call['request_id']}.json"), call)
+    with open(os.path.join(gate_project, "_work", "plan", "plan.review.json"), "a",
+              encoding="utf-8") as fh:
+        fh.write(" ")
+    code, out, err = script(gate_project, "plan_gate.py", [
+        "check", "--envelope", "_work/plan/env_plan.yaml",
+        "--result", "_work/plan/plan.review.json"])
+    check("plan gate: a result edited after the call is rejected", code == 4, out + err)
+    make_plan_review(gate_project, "_work/plan/env_plan.yaml",
+                     "_work/plan/plan.review.json", "g_b/claude-mock")
+    finding = {"id": "F1", "location": "plan", "target": "scope", "severity": "high",
+               "severity_basis": "missing gate", "issue": "no gate", "evidence": "text",
+               "fix": "add gate", "origin": "independent"}
+    env_path, result_path, call = make_plan_review(
+        gate_project, "_work/plan/env_plan.yaml", "_work/plan/plan.review.json",
+        "g_b/claude-mock")
+    result = json.load(open(result_path, encoding="utf-8"))
+    result["findings"] = [finding]
+    write_json(result_path, result)
+    call["result_sha256"] = sha(result_path)
+    write_json(os.path.join(gate_project, "_work", "calls",
+                            f"{call['request_id']}.json"), call)
+    code, out, err = script(gate_project, "plan_gate.py", [
+        "check", "--envelope", "_work/plan/env_plan.yaml",
+        "--result", "_work/plan/plan.review.json"])
+    check("plan gate: an open high finding blocks dispatch", code == 5, out + err)
+    write(os.path.join(gate_project, "_work", "plan", "review_ledger.md"),
+          "# review ledger\n\n| id | round | where | status | reason | owner | budget_change |\n"
+          "|---|---|---|---|---|---|---|\n| F1 | 1 | plan | rejected | by design | lead | |\n")
+    code, out, err = script(gate_project, "plan_gate.py", [
+        "check", "--envelope", "_work/plan/env_plan.yaml",
+        "--result", "_work/plan/plan.review.json"])
+    check("plan gate: a closed finding unblocks", code == 0, out + err)
+
+    # Legacy v1 evidence is accepted only for a call pinned below 2.2.0.
+    legacy_env = os.path.join(gate_project, "_work", "plan", "env_legacy.yaml")
+    text = open(os.path.join(gate_project, "_work", "plan", "env_plan.yaml"),
+                encoding="utf-8").read().replace("envelope_version: 2\n", "")
+    write(legacy_env, text)
+    legacy_result = result_for(legacy_env, ["plan"], findings=[])
+    legacy_result_path = os.path.join(gate_project, "_work", "plan", "legacy.review.json")
+    write_json(legacy_result_path, legacy_result)
+    legacy_rid = legacy_result["request_id"]
+    write_json(os.path.join(gate_project, "_work", "calls", f"{legacy_rid}.json"), {
+        "request_id": legacy_rid, "status": "ok", "ephemeral": False,
+        "schema_valid": True, "model": "g_b/claude-mock",
+        "contract": {"pinned": "2.1.0"}})
+    code, out, err = script(gate_project, "plan_gate.py", [
+        "check", "--envelope", "_work/plan/env_legacy.yaml",
+        "--result", "_work/plan/legacy.review.json"])
+    check("plan gate: legacy 2.1 evidence is accepted with a v1 envelope", code == 0,
+          out + err)
+    code, out, err = script(gate_project, "plan_gate.py", [
+        "check", "--envelope", "_work/plan/env_plan.yaml",
+        "--result", "_work/plan/legacy.review.json"])
+    check("plan gate: a v2 envelope with a legacy record is rejected", code == 4,
+          out + err)
+
+    # ---------------------------------------------------------------- review budget
+    budget_project = os.path.join(work, "budget-project")
+    os.makedirs(budget_project)
+    facts_for(budget_project)
+    for index, duration in (("R1", 20), ("R2", 15)):
+        write_json(os.path.join(budget_project, "_work", "calls", f"{index}.json"), {
+            "request_id": index, "status": "ok", "role": "review", "milestone": "M1",
+            "duration_s": duration, "model": "g_b/claude-mock", "protocol_version": 2})
+    code, out, err = script(budget_project, "review_budget.py",
+                            ["check", "--milestone", "M1"])
+    check("review budget: a third round needs why-unclosed", code == 3, out + err)
+    code, out, err = script(budget_project, "review_budget.py",
+                            ["check", "--milestone", "M1", "--why-unclosed",
+                             "rounds 1-2 did not close the design"])
+    check("review budget: over budget needs a change", code == 4, out + err)
+    code, out, err = script(budget_project, "review_budget.py",
+                            ["check", "--milestone", "M1", "--why-unclosed", "x",
+                             "--budget-change", "one-off"])
+    check("review budget: an explicit one-off passes the check", code == 0, out + err)
+    code, out, err = script(budget_project, "review_budget.py",
+                            ["raise", "--to", "4", "--reason", "raise for closure"])
+    check("review budget: raise edits the facts pack", code == 0, out + err)
+    code, out, err = script(budget_project, "review_budget.py",
+                            ["check", "--milestone", "M1", "--why-unclosed", "x"])
+    check("review budget: the raised budget admits the third call", code == 0, out + err)
+    code, out, err = script(budget_project, "review_budget.py",
+                            ["note-minutes", "--milestone", "M1", "--reason", "over"])
+    check("review budget: minute notice is recorded", code == 0, out + err)
+    code, info = review_budget.preflight(budget_project, "M1", "review", "R1")
+    check("review budget: a request id cannot be reused", code == 2, info)
+    code, info = review_budget.preflight(budget_project, "M1", "review", "R3",
+                                         why_unclosed="x")
+    check("review budget: a reservation is written atomically", code == 0
+          and os.path.isfile(os.path.join(budget_project, "_work", "calls", "pending",
+                                          "R3.json")), info)
+    code, info = review_budget.preflight(budget_project, "M1", "review", "R4",
+                                         why_unclosed="x")
+    check("review budget: a distinct concurrent id also reserves", code == 0, info)
+    review_budget.finalize(budget_project, "R3")
+    review_budget.finalize(budget_project, "R4")
+    report_text = script(budget_project, "review_budget.py", ["report", "--json"])[1]
+    report = json.loads(report_text) if report_text.strip().startswith("{") else {}
+    check("review budget: report counts the milestone", report.get("milestones")
+          and report["milestones"][0].get("review_calls") == 2, report_text)
+
+    # ---------------------------------------------------------------- production/deliver
+    prod = os.path.join(work, "prod-project")
+    os.makedirs(prod)
+    facts_for(prod)
+    write(os.path.join(prod, "_work", "plan", "plan.md"), plan_text)
+    artifact = os.path.join(prod, "out.txt")
+    write(artifact, "produced\n")
+    produce = {"request_id": "P1", "status": "ok", "role": "produce",
+               "milestone": "M1", "model": "g_b/claude-mock", "protocol_version": 2,
+               "work_package": "WP1", "produce_artifact": artifact,
+               "produce_artifact_hash": sha(artifact), "routing_tier": "S"}
+    write_json(os.path.join(prod, "_work", "calls", "P1.json"), produce)
+    code, out, err = script(prod, "review_budget.py", ["deliver", "--tier", "S"])
+    check("deliver: a produce unit without adoption blocks", code == 5, out + err)
+    code, out, err = script(prod, "review_budget.py",
+                            ["adopt", "--request-id", "P1", "--decision", "adopted",
+                             "--reason", "integrated"])
+    check("deliver: adoption is recorded", code == 0, out + err)
+    code, out, err = script(prod, "review_budget.py", ["deliver", "--tier", "S"])
+    check("deliver: S/A with an adopted plan work package passes", code == 0, out + err)
+    produce["work_package"] = "WP9"
+    write_json(os.path.join(prod, "_work", "calls", "P1.json"), produce)
+    code, out, err = script(prod, "review_budget.py", ["deliver", "--tier", "S"])
+    check("deliver: a work package not in the plan is refused", code == 5, out + err)
+    produce["work_package"] = "WP1"
+    produce["produce_artifact"] = os.path.join(prod, "other.txt")
+    write_json(os.path.join(prod, "_work", "calls", "P1.json"), produce)
+    code, out, err = script(prod, "review_budget.py", ["deliver", "--tier", "S"])
+    check("deliver: the artifact must match the WP output", code == 5, out + err)
+    produce["produce_artifact"] = artifact
+    produce.pop("routing_tier")
+    write_json(os.path.join(prod, "_work", "calls", "P1.json"), produce)
+    code, out, err = script(prod, "review_budget.py", ["deliver"])
+    check("deliver: a missing tier fails closed", code == 5, out + err)
+    code, out, err = script(prod, "review_budget.py", ["deliver", "--tier", "B"])
+    check("deliver: B is exempt from the GPT production rule", code == 0, out + err)
+    produce["routing_tier"] = "S"
+    write_json(os.path.join(prod, "_work", "calls", "P1.json"), produce)
+    approval = os.path.join(prod, "_work", "gates", "approval.md")
+    write(approval, "user approved the deviation\n")
+    code, out, err = script(prod, "review_budget.py",
+                            ["waive", "--tier", "S", "--approval-ref", approval,
+                             "--reason", "lead produced this delivery"])
+    check("deliver: a stored approval is required and recorded", code == 0, out + err)
+    os.remove(os.path.join(prod, "_work", "calls", "P1.json"))
+    code, out, err = script(prod, "review_budget.py", ["deliver", "--tier", "S"])
+    check("deliver: an approved deviation unblocks S/A without a produce unit", code == 0,
+          out + err)
+
+    # ---------------------------------------------------------------- workspace identity
+    session_project = os.path.join(work, "session-project")
+    os.makedirs(session_project)
+    code, out, err = script(session_project, "session.py", ["pin"])
+    pin_path = os.path.join(session_project, "_work", "skill_pin.json")
+    pin = json.load(open(pin_path, encoding="utf-8")) if os.path.isfile(pin_path) else {}
+    check("session: pin stores the workspace identity", code == 0
+          and pin.get("workspace", {}).get("root")
+          and pin.get("workspace", {}).get("volume"), out + err)
+    code, out, err = script(session_project, "session.py", ["check"])
+    check("session: the same root passes", code == 0, out + err)
+    saved = dict(pin)
+    pin["workspace"] = dict(pin["workspace"], drive="Z:")
+    write_json(pin_path, pin)
+    code, out, err = script(session_project, "session.py", ["check"])
+    check("session: a drive mismatch requires re-pin", code == 2, out + err)
+    pin["workspace"] = dict(saved["workspace"], volume=1)
+    write_json(pin_path, pin)
+    code, out, err = script(session_project, "session.py", ["check"])
+    check("session: a volume mismatch requires re-pin", code == 2, out + err)
+    write_json(pin_path, saved)
+    copied = os.path.join(work, "session-copy")
+    os.makedirs(os.path.join(copied, "_work"))
+    shutil.copyfile(pin_path, os.path.join(copied, "_work", "skill_pin.json"))
+    code, out, err = script(copied, "session.py", ["check"])
+    check("session: a copied pin is refused in another root", code == 2, out + err)
+    legacy = {key: value for key, value in saved.items() if key != "workspace"}
+    write_json(pin_path, legacy)
+    code, out, err = script(session_project, "session.py", ["check"])
+    check("session: a legacy pin requires re-pin", code == 2, out + err)
+    write_json(pin_path, saved)
+    identity_text = script(session_project, "session.py", ["identity", "--json"])[1]
+    identity = json.loads(identity_text) if identity_text.strip().startswith("{") else {}
+    check("session: identity reports root/drive/volume", bool(identity.get("root"))
+          and bool(identity.get("drive")) and identity.get("volume") is not None,
+          identity_text)
+
+    # ---------------------------------------------------------------- check_docs + release
+    def docs_fixture(root, *, trigger="甲、乙", version="1.0.0", rules=None,
+                     extra_script=False, extra_text="", readme_version=None,
+                     changelog_count=1):
+        if os.path.isdir(root):
+            shutil.rmtree(root)
+        rules = rules or "1. **One**\n2. **Two**"
+        write(os.path.join(root, "SKILL.md"),
+              f"---\nname: fixture\ndescription: fixture. 触发词：{trigger}。\n"
+              f"metadata:\n  version: {version}\n  updated: 2026-10-28\n---\n\n"
+              f"# Fixture\n\n## Non-negotiables\n\n{rules}\n\n## Scripts\n\n"
+              f"`python scripts/a.py`\n{extra_text}")
+        write(os.path.join(root, "README.md"),
+              f"# Fixture\n\n- 版本：{readme_version or version}（2026-10-28）\n"
+              f"- 当前离线自测：{changelog_count} 项（mock）\n\n## 目录\n\n`a.py`\n\n"
+              f"## 更新日志\n\n| 版本 | 日期 | 变更 |\n|---|---|---|\n"
+              f"| {version} | 2026-10-28 | x；{changelog_count} 项离线自测 |\n")
+        write(os.path.join(root, "scripts", "a.py"), "print('ok')\n")
+        if extra_script:
+            write(os.path.join(root, "scripts", "b.py"), "print('ok')\n")
+
+    docs = os.path.join(work, "docs-fixture")
+    docs_fixture(docs)
+    issues = check_docs.collect_issues(docs)
+    check("check_docs: a clean fixture passes", not issues, issues)
+    docs_fixture(docs, trigger="甲、甲")
+    codes = {issue["code"] for issue in check_docs.collect_issues(docs)}
+    check("check_docs: duplicate trigger words are caught", "trigger" in codes, codes)
+    docs_fixture(docs, extra_text="\nF:\\old\\path\n")
+    codes = {issue["code"] for issue in check_docs.collect_issues(docs)}
+    check("check_docs: an old F: path is caught", "old-path" in codes, codes)
+    docs_fixture(docs, extra_text="\nliteral \\n in prose\n")
+    codes = {issue["code"] for issue in check_docs.collect_issues(docs)}
+    check("check_docs: a literal backslash-n is caught", "literal-newline" in codes, codes)
+    docs_fixture(docs, rules="1. **One**\n3. **Three**")
+    codes = {issue["code"] for issue in check_docs.collect_issues(docs)}
+    check("check_docs: broken rule numbering is caught", "rules" in codes, codes)
+    docs_fixture(docs, extra_script=True)
+    codes = {issue["code"] for issue in check_docs.collect_issues(docs)}
+    check("check_docs: an undocumented script is caught", "script-doc" in codes, codes)
+    docs_fixture(docs, readme_version="1.0.1")
+    codes = {issue["code"] for issue in check_docs.collect_issues(docs)}
+    check("check_docs: a version mismatch is caught", "version" in codes, codes)
+    docs_fixture(docs)
+    codes = {issue["code"] for issue in check_docs.collect_issues(docs, 2)}
+    check("check_docs: a wrong test count is caught", "test-count" in codes, codes)
+    real = check_docs.collect_issues(SKILL)
+    check("check_docs: the real repository is consistent", not real, real)
+
+    release_root = os.path.join(work, "release-fixture")
+    docs_fixture(release_root)
+    write(os.path.join(release_root, "scripts", "selftest_models.py"),
+          "print('3 passed, 0 failed')\n")
+    with open(os.path.join(release_root, "SKILL.md"), "a", encoding="utf-8") as fh:
+        fh.write("\n`python scripts/selftest_models.py`\n")
+    with open(os.path.join(release_root, "README.md"), "a", encoding="utf-8") as fh:
+        fh.write("\n`selftest_models.py`\n")
+    git = subprocess.run(["git", "init"], cwd=release_root, capture_output=True, text=True)
+    subprocess.run(["git", "config", "user.email", "test@example.invalid"],
+                   cwd=release_root, capture_output=True)
+    subprocess.run(["git", "config", "user.name", "test"], cwd=release_root,
+                   capture_output=True)
+    subprocess.run(["git", "add", "-A"], cwd=release_root, capture_output=True)
+    subprocess.run(["git", "commit", "-m", "init"], cwd=release_root,
+                   capture_output=True)
+    before = open(os.path.join(release_root, "README.md"), encoding="utf-8").read()
+    code, out, err = script(release_root, "release.py",
+                            ["--version", "1.1.0", "--note", "test release",
+                             "--dry-run"])
+    after = open(os.path.join(release_root, "README.md"), encoding="utf-8").read()
+    check("release: dry-run changes nothing", code == 0 and before == after, out + err)
+    code, out, err = script(release_root, "release.py",
+                            ["--version", "1.1.0", "--note", "test release",
+                             "--no-push"])
+    readme_after = open(os.path.join(release_root, "README.md"), encoding="utf-8").read()
+    tagged = subprocess.run(["git", "tag", "--list", "v1.1.0"], cwd=release_root,
+                            capture_output=True, text=True).stdout.strip()
+    check("release: one command updates version/count and tags", code == 0
+          and "1.1.0" in readme_after and "3 项离线自测" in readme_after
+          and tagged == "v1.1.0", out + err)
+    with open(os.path.join(release_root, "README.md"), "a", encoding="utf-8") as fh:
+        fh.write("dirty\n")
+    code, out, err = script(release_root, "release.py",
+                            ["--version", "1.1.1", "--note", "x", "--no-push"])
+    check("release: a dirty tree is refused", code == 1, out + err)
+    subprocess.run(["git", "restore", "--source=HEAD", "--", "README.md"],
+                   cwd=release_root, capture_output=True)
+    subprocess.run(["git", "tag", "v1.2.0"], cwd=release_root, capture_output=True)
+    code, out, err = script(release_root, "release.py",
+                            ["--version", "1.2.0", "--note", "x", "--no-push"])
+    check("release: an existing tag is refused", code == 1, out + err)
 
 
 if __name__ == "__main__":

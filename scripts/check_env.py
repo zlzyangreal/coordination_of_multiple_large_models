@@ -24,6 +24,10 @@ from datetime import datetime
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
+HERE = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, HERE)
+import gate_common as common  # noqa: E402
+
 
 def resolve_codex():
     """Never hardcode bin/<hash>/; return the newest codex.exe under the install root."""
@@ -133,6 +137,21 @@ def main():
     print(f"[{'OK' if ok_dir else 'FAIL'}] workdir writable")
     if not ok_dir:
         blockers.append("workdir not writable")
+
+    pin = common.load_pin(workdir)
+    if not pin:
+        print("[WARN] no session pin in this root; run `session.py pin` before routing")
+    else:
+        problems = common.identity_mismatches(pin, workdir)
+        if problems:
+            print("[FAIL] workspace identity mismatch: " + "; ".join(problems))
+            print("       this pin/_work belongs to another path or disk; re-pin with "
+                  "`session.py pin --force`")
+            blockers.append("workspace identity mismatch")
+        else:
+            workspace = pin.get("workspace") or {}
+            print(f"[OK] pinned workspace: {workspace.get('root')} "
+                  f"({workspace.get('drive')}, volume {workspace.get('volume')})")
 
     if args.short_call and codex:
         try:

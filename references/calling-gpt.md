@@ -24,23 +24,34 @@ Production calls were being copied from the environment probe, which used
 ## The runner
 
 ```bash
-python scripts/run_gpt.py --prompt-file prompt.txt --cd _work --request-id R20261024-01 \
-    --sandbox read-only --output _work/payload.json --timeout 1200
+python scripts/run_gpt.py --prompt-file prompt.txt --cd _work --role produce \
+    --work-package WP2 --produce-artifact _work/out/api.py --request-id R20261028-01 \
+    --sandbox workspace-write --output _work/payload.md --timeout 1200
 ```
 
 | Rule | Detail |
 |---|---|
-| Persistent by default | no `--ephemeral`; `--probe` is the only way to get one, for connectivity only |
+| Semantic role | `plan`, `produce`, `review`, `plan-review` or `probe`; omitted = `review` if `--schema` else `produce` |
+| Plan gate | `produce` requires `--work-package`, a reviewed plan, and passes `plan_gate.py` before launch |
+| Review gate | `review`/`plan-review` require `--schema`, `--envelope`, `--result-path` and `--milestone`; a third round needs `--why-unclosed` |
+| Persistent by default | no `--ephemeral`; `--probe`/`--role probe` is the only ephemeral path, text-only, never adoptable |
 | Runtime path | newest `%LOCALAPPDATA%\OpenAI\Codex\bin\*\codex.exe`; a `bin/<hash>/` literal is a defect |
 | Explicit model + effort | `-m <model>` and `-c model_reasoning_effort=<effort>` always passed, defaulting to `~/.codex/config.toml` |
 | Review calls carry a schema | `--schema assets/result.schema.json`; free-text production calls must **not** pass one |
 | Strict derivation | the runner converts the contract to codex strict mode (`additionalProperties: false`, all-required); `--schema-raw` bypasses it |
 | Result capture | `--output` (payload) then `--result-path`; the runner copies and validates, the reviewer writes nothing |
+| Facts freshness | the runner rehashes the facts pack named by the envelope immediately before launch |
+| Identity | a pin naming another root/disk refuses the call; re-pin first |
 | Three paths | `--output` / `--result-path` / artifact stay distinct |
 | Timeout | default 1200 s; on expiry the process is killed and the turn is closed as `interrupted` |
-| Record | `_work/calls/<request_id>.json` + `.events.jsonl` |
-| Ledger | one quota row appended per call; `--no-ledger` skips it |
-| Exit | 0 ok, 1 failure, 2 bad invocation, 3 schema-invalid, 124 timeout |
+| Record | `_work/calls/<request_id>.json` + `.events.jsonl`; role/milestone/tier/envelope/result hashes |
+| Ledger | one quota row per call, prefixed `role=... M=... WP=...`; `--no-ledger` skips it |
+| Exit | 0 ok, 1 failure, 2 bad invocation or refused gate, 3 schema-invalid, 124 timeout |
+
+For a review, the budget preflight runs before launch and writes an atomic
+`_work/calls/pending/<request_id>.json`; the marker is removed after the final record. A request
+id can be used once. Overrides go to `_work/gates/events.jsonl` (query with
+`review_budget.py report`).
 
 Long prompts (>6000 chars) are fed on stdin to stay under the Windows command-line
 limit; short prompts are passed as an argument. Both produce the same record.
@@ -49,7 +60,7 @@ limit; short prompts are passed as an argument. Both produce the same record.
 
 ```bash
 python scripts/run_gpt.py --prompt-file _work/review/brief_v6.md --cd _work --request-id R6 \
-    --sandbox read-only \
+    --role review --milestone M2 --sandbox read-only \
     --schema assets/result.schema.json \
     --envelope _work/review/env_v6.yaml \
     --output _work/review/payload_v6.json \
@@ -77,12 +88,17 @@ Every call leaves this, and the postmortem quotes it instead of "it ran":
 | Field | Meaning |
 |---|---|
 | `request_id`, `status` | identity and `ok / failed / timeout / incomplete / schema-invalid` |
+| `protocol_version`, `role`, `role_source`, `milestone` | semantic role and the budget bucket |
+| `work_package`, `produce_artifact`, `produce_artifact_hash` | C2 production evidence |
+| `routing_tier`, `tier_source` | the quota tier the call was authorised under |
 | `started_at`, `finished_at`, `duration_s` | wall clock |
 | `model`, `effort`, `sandbox`, `ephemeral` | what actually ran |
-| `contract` | pinned skill version, current version, `drift` flag |
+| `contract`, `workspace` | pinned skill version, drift, and absolute root/drive/volume/HEAD |
 | `thread_id`, `rollout_path`, `events_path` | where to look, and whether it persisted |
 | `exit_code`, `usage` | process result and token usage |
 | `schema_path`, `schema_valid`, `schema_errors` | whether the result met the contract |
+| `envelope_sha256`, `artifact`, `artifact_sha256`, `result_sha256` | the evidence chain the plan gate checks |
+| `budget` | prior calls/minutes, `why_unclosed`, `budget_change` |
 | `quota_before`, `quota_after`, `quota_delta_pts`, `quota_ledger` | budget accounting |
 | `turn_cleanup` | `reaped: true` and the backup path when a killed turn was closed |
 | `final_message`, `output_path`, `result_path` | what came back, and where it landed |
@@ -99,7 +115,9 @@ record is not evidence.
   outside the quota reader and out of scope for this skill. Say so in the report instead
   of claiming the call left no trace.
 - `--ephemeral` is acceptable for exactly two things: the connectivity probe in
-  `check_env.py --short-call`, and `run_gpt.py --probe`. Never for production or review.
+  `check_env.py --short-call`, and `run_gpt.py --probe`/`--role probe`. A probe is text-only:
+  it cannot write `--output`, carry a schema/envelope, or count as production. Never use an
+  ephemeral call for production or review.
 
 ## Interrupted calls
 

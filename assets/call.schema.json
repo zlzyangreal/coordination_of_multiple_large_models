@@ -12,6 +12,34 @@
   ],
   "properties": {
     "request_id": {"type": "string"},
+    "protocol_version": {
+      "enum": [2],
+      "description": "v2.2 records carry 2; a missing value is legacy v2.1 evidence"
+    },
+    "role": {
+      "enum": ["plan", "produce", "review", "plan-review", "probe"],
+      "description": "Semantic call role; probe is text-only and never counted as production"
+    },
+    "role_source": {"enum": ["explicit", "inferred", "forced"]},
+    "milestone": {"type": ["string", "null"]},
+    "work_package": {"type": ["string", "null"]},
+    "produce_artifact": {"type": ["string", "null"]},
+    "produce_artifact_hash": {"type": ["string", "null"]},
+    "routing_tier": {"type": ["string", "null"]},
+    "tier_source": {"type": ["string", "null"]},
+    "envelope_path": {"type": ["string", "null"]},
+    "envelope_sha256": {"type": ["string", "null"]},
+    "artifact": {"type": ["string", "null"]},
+    "artifact_sha256": {"type": ["string", "null"]},
+    "result_sha256": {"type": ["string", "null"]},
+    "budget": {
+      "type": ["object", "null"],
+      "description": "Review preflight result (prior calls/minutes, why-unclosed, budget change)"
+    },
+    "workspace": {
+      "type": ["object", "null"],
+      "description": "Absolute root, drive, volume and git HEAD at call time"
+    },
     "status": {"enum": ["ok", "failed", "timeout", "incomplete", "schema-invalid"]},
     "ephemeral": {
       "type": "boolean",

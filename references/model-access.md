@@ -198,13 +198,18 @@ others 3/3/3/3). Override per model in the project config and the source is repo
 ```
 
 - The plan is written to `<project>/_work/plan/plan.md` with a `planner.json` record
-  (request id, planner, scores, usage, attempts).
+  (request id, planner, scores, usage, attempts, `plan_sha256`, `plan_mtime`).
 - `models.py plan` refuses when the planner is the `dsh` lane: the session must draft that
   plan itself; the CLI writes the brief and exits 2.
 - `call --role plan` refuses; planning has its own brief, output and record.
-- The planner does not assign work. The plan ends with suggested work packages; the
-  dispatcher decides owners, and the plan goes through the review gate first
-  (`models.py call --role review --producer <planner>`).
+- The planner does not assign work. The plan ends with a work-package table
+  (`| id | output | DoD |`); the dispatcher decides owners. The plan goes through the review
+  gate first (`build_envelope.py` + `run_gpt.py --role plan-review`), then `plan_gate.py check`.
+- `plan_gate.py` binds the plan hash/mtime, envelope, result, call record and reviewer family.
+  `models.py call` with no `--role` is inferred as `produce` and runs the gate on every lane
+  before credentials/network; `--role probe` is text-only and never counts as production.
+- `models.py call --role produce` needs a reviewed plan and (`run_gpt.py`) a `--work-package`.
+  Its output is not adopted until `review_budget.py adopt` records the decision.
 
 ## Providers and model rows
 
@@ -322,6 +327,13 @@ python scripts/models.py call --model codex:auto --prompt-file brief.md --dry-ru
   production to the lead, instead of silently calling codex as a substitute lead. A
   `dsh` row is never offered as a fallback link, because a fallback that cannot be
   called is not a fallback.
+- A `call` with no `--role` is **production**: it is inferred as `produce` and must pass
+  `plan_gate.py` on every lane. `--role probe` is the explicit text-only path
+  (`--output`, `--result-path`, `--schema`, `--envelope`, `--work-package` and
+  `--produce-artifact` are refused); it can never be adopted or counted as production.
+- `--role review|plan-review` requires `--schema`, `--envelope`, `--result-path` and
+  `--milestone`. On the HTTP lane the response is parsed as JSON, validated and recorded with
+  `result_path`/`result_sha256`; on the codex lane it is forwarded to `run_gpt.py`.
 - The HTTP lane is non-streaming by design: a coordination call is a bounded unit of
   work whose result the lead reads in full, and every OpenAI-compatible local server
   implements the non-streaming shape.

@@ -30,23 +30,30 @@ be litigated as a constraint:
 | **budgets** | size (lines/files/pages/PR), number of calls, performance envelope, deadlines — each with default and change log | overrun → `notice`, never a veto |
 
 - `constraints` are frozen. `budgets` are adjustable, but only before production and only with
-  a recorded change (ledger `budget_change` row), never "after seeing the draft".
+  a recorded change (ledger `budget_change` row / `review_budget.py raise`), never "after seeing
+  the draft".
 - Reviewer rule: a budget overrun is `severity: notice`; a constraint violation is
   `high`/`medium`. "The PR is 900 lines against a 600-line budget" does not block delivery.
+- **Version and hash**: the pack carries exactly one `facts_version`, `facts_hash` and
+  `frozen_at` header. `python scripts/facts_pack.py freeze` writes them; every scope or budget
+  change uses `bump --reason`, which increments the version and appends a `## version log` row.
+  `check` exits 3 when the body changed without a freeze. The envelope carries the values; the
+  runner rehashes before launch and `validate_result.py` rechecks during validation.
+- Review budget rows: `review_calls` (default 2 per milestone) and `review_minutes` (default 30).
 - Template: `assets/facts-pack.example.md`.
 
 ## Execution (8 steps with gates)
 
 | # | Action | Gate |
 |---|---|---|
-| 0 | Pin the contract (`session.py pin`), snapshot originals, record SHA256 | no pin, no start; no edit without backup |
+| 0 | Pin the contract **and root identity** (`session.py pin`), snapshot originals, record SHA256 | no pin/identity, no start; no edit without backup |
 | 1 | Capability + quota check | no routing before check |
-| 2 | Decompose, board, contract | no board, no start |
-| 3 | Facts pack (constraints vs budgets) | no parallel work before freeze |
-| 4 | Produce + independent review (schema-enforced) | producer never self-reviews; advisory drafts count as production |
+| 2 | Plan, then independent plan review + `plan_gate.py check` | no reviewed plan, no dispatch; different family; v2 record binding |
+| 3 | Decompose, board, contract, facts pack frozen + versioned, review budget | no board/frozen facts/budget, no start |
+| 4 | Produce + independent review (roles, schema, evidence) | producer never self-reviews; advisory drafts count as production; `probe` never counts |
 | 5 | Integrate / merge | single owner per file |
-| 6 | Cross-model acceptance: behaviour + constraints + facts | open items block delivery |
-| 7 | Deliver + postmortem | no postmortem, not done |
+| 6 | Cross-model acceptance + `review_budget.py deliver` | open items or missing S/A produce unit block delivery |
+| 7 | Release checks + postmortem (`check_docs.py --run-tests`, `release.py`) | no checks/postmortem, not done |
 
 ## Working discipline
 
@@ -72,8 +79,14 @@ be litigated as a constraint:
   facts pack.
 - **Review integrity**: every adopted finding has a schema-valid result and a call record; any
   `advisory-derived` unit is declared non-independent; no finding adopted without source verification.
+- **Evidence**: when the envelope carries `test_evidence`, the result cites at least one
+  `test_refs` entry with the log hash and a verbatim excerpt absent from the envelope summary;
+  otherwise the review declares itself static-only. The facts pack was fresh at build, launch and
+  validation.
+- **Plan gate**: production was dispatched only after `plan_gate.py check` passed; any waiver is
+  a recorded deviation, never a pass.
 - **Delivery**: artifact + supporting docs + backup + note; version in the filename or commit;
-  originals untouched; postmortem updated. The note states `SKILL vX (pinned …), repository vY`
+  originals untouched; postmortem updated; `review_budget.py deliver` passed. The note states `SKILL vX (pinned …), repository vY`
   and whether any gate was skipped.
 - **Postmortem**: the fixed question "was the skill in force the whole session? where did it
   break?" is answered; any deviation is written down, not remembered.

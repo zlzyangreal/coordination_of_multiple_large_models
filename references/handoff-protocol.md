@@ -36,17 +36,21 @@ A unit carries `id`, `kind`, `locator`, `expected`. The reviewer must report eve
 
 | Field | Required | Notes |
 |---|---|---|
-| `request_id` | yes | unique |
+| `request_id` | yes | unique; a request id is used once |
+| `envelope_version` | yes | `2`; a v2 envelope requires a v2 call record |
 | `skill_version`, `skill_pinned_at` | yes | which contract built this envelope (session pin) |
+| `producer` | yes | producing model id (`dsh:auto` for a lead-authored artifact) |
 | `artifact` | yes | absolute path (file or directory) |
 | `version_hash` | yes | SHA256 of the file, or a tree hash (paths + file hashes) when the artifact is a directory |
 | `artifact_mtime` | yes | ISO 8601 with offset |
+| `facts_path`, `facts_version`, `facts_hash`, `facts_frozen_at` | yes | the frozen facts pack; the runner rehashes it before launch |
 | `artifact_access` | yes | default `read-only` |
 | `result_capture` | yes | default `runner` |
 | `output_path` | yes | payload path; differs from artifact and result |
 | `result_path` | yes | written by the lead after validation, never by the reviewer |
 | `output_schema` | yes | **absolute path** to a JSON Schema (`assets/result.schema.json`) |
-| `units` | yes | list of `{id, kind, locator, expected}`; `[]` only for an "open" review |
+| `units` | yes | list of `{id, kind, locator, expected}`; `[]` only for an "open" review; each evidence log is added as a unit |
+| `test_evidence` | no | `test_evidence.py` records (id, command, exit code, log sha256, summary); when present the result must cite one |
 | `scope` | yes | what is in and out; "others untouched" |
 | `acceptance` | yes | itemized, decidable |
 | `prior_findings` | yes | closed items from `review_ledger.md`; `[]` for round 1; generated, never hand-written |
@@ -54,7 +58,8 @@ A unit carries `id`, `kind`, `locator`, `expected`. The reviewer must report eve
 
 Pre-send: artifact exists and hash/mtime match; every unit locator exists and has an
 `expected`; schema path exists; `prior_findings` regenerated from the current ledger; three
-paths distinct; `capture=runner` (or a successful write probe for `direct`).
+paths distinct; capture=runner; facts pack fresh (`facts_pack.py check`); evidence logs exist
+and their hashes match.
 
 Generate:
 
@@ -106,6 +111,11 @@ Rules:
 - Declare `units_seen`, `units_confirmed`, `limitations`. Every envelope unit must appear in
   both lists; omission fails validation.
 - Echo `artifact_mtime`; a mismatch is a wrong version — discard the round.
+- A v2 envelope requires `facts_version` (echo it) and, when `test_evidence` is present,
+  `test_refs` with at least one entry. Each ref carries the evidence `id`, `command`,
+  `exit_code`, `log_sha256` and `observed`: a verbatim excerpt (≥20 chars) that exists in the
+  log but **not** in the envelope summary. Copying the envelope cannot pass; the reviewer must
+  have read the log. Missing or mismatched refs are invalid, not "medium".
 - Machine contract: `assets/result.schema.json`. Check every result before adopting it:
 
 ```bash
@@ -143,6 +153,24 @@ design, a scaffold, a patch or any advisory text that the lead adopted, that wor
   "not independent" declaration in the delivery note;
 - if only one model is usable, delivery says "本轮评审非独立（同源）" — an independent gate
   over your own draft is not a gate.
+
+## Plan review gate
+
+A plan is an artifact with its own review. Generate the envelope for `_work/plan/plan.md` and
+review it with a different family; then:
+
+```bash
+python scripts/plan_gate.py check --envelope _work/plan/env_plan.yaml \
+    --result _work/plan/plan.review.json --ledger _work/plan/review_ledger.md
+```
+
+The gate validates the result, compares the plan hash/mtime with the envelope and the result,
+requires the call record (v2: `protocol_version`, review role, `envelope_sha256`,
+`result_sha256`, `artifact_sha256`), checks the planner record (or treats the plan as
+lead-authored), and refuses a same-family or unknown-family reviewer. A high/medium finding
+without a closed ledger row blocks dispatch. Exit codes: 3 no review, 4 stale/mixed, 5 open
+finding, 6 not independent. `run_gpt.py --role produce` and every `models.py call` inferred as
+`produce` run this gate first; there is no production waiver.
 
 ## Review gate
 

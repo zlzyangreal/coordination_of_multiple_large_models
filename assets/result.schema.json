@@ -73,6 +73,29 @@
       }
     },
     "confidence": {"enum": ["high", "medium", "low"]},
+    "facts_version": {
+      "type": "string",
+      "description": "Echo of the envelope's facts_version (required by the validator for v2 envelopes)"
+    },
+    "test_refs": {
+      "type": "array",
+      "description": "Evidence the reviewer actually read; required when the envelope carries test_evidence",
+      "items": {
+        "type": "object",
+        "required": ["id", "command", "exit_code", "log_sha256", "observed"],
+        "properties": {
+          "id": {"type": "string", "minLength": 1},
+          "command": {"type": "string", "minLength": 1},
+          "exit_code": {"type": "integer"},
+          "log_sha256": {"type": "string", "pattern": "^[0-9A-Fa-f]{64}$"},
+          "observed": {
+            "type": "string",
+            "minLength": 20,
+            "description": "A verbatim excerpt from the evidence log, not from the envelope summary"
+          }
+        }
+      }
+    },
     "limitations": {"type": "array", "items": {"type": "string"}}
   }
 }

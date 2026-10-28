@@ -12,11 +12,14 @@
 | Toolchain | whatever the artifact needs: compiler/interpreter, test runner, package manager, linter, renderer, diff tool | absolute paths |
 | Network | egress, proxy vars, Clash/TUN | triage below |
 | Permissions | sandbox mode, target writable, file locks | read-only / workspace-write / full |
+| Workspace identity | pin root/drive/volume vs current root | `session.py identity` + `check` |
 | Skills | available skills/plugins | names |
 
-Run once: `python scripts/check_env.py [--short-call]`. The `--short-call` probe is
-`--ephemeral` **by design** (connectivity only, no history). Production and review calls go
-through `scripts/run_gpt.py`, which persists; see [calling-gpt.md](calling-gpt.md).
+Run once: `python scripts/check_env.py [--short-call]`. It also blocks when `_work/skill_pin.json`
+names a different root/disk (or is a legacy pin without identity): re-pin there before any call.
+The `--short-call` probe is `--ephemeral` **by design** (connectivity only, no history).
+Production and review calls go through `scripts/run_gpt.py`, which persists; see
+[calling-gpt.md](calling-gpt.md).
 
 ## Toolchain
 
@@ -43,6 +46,12 @@ Decision:
 - Never add concurrency to fight a stall. Downgrade only after the wait window with no new logs, and record the real cause.
 
 Observed 2026-10-23: without proxy, identical command looped `Reconnecting 5/5`; with proxy, returned in 7 minutes, zero reconnects.
+
+Observed 2026-10-28: with `HTTPS_PROXY`/`HTTP_PROXY`/`ALL_PROXY` unset, the runner log showed
+`Reconnecting... 2/5 ... 5/5 (request timed out)` then `Falling back from WebSockets to HTTPS`;
+the same review took 351-614 s. With all three set to `http://127.0.0.1:7897`, it took 165 s and
+1 quota point. The retries, not the model, were the delay — set the proxy vars before `run_gpt.py`
+and do not diagnose this as "GPT is slow".
 
 ## Permissions
 
