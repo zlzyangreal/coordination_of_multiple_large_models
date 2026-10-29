@@ -1999,6 +1999,7 @@ def cmd_call(args):
                     "ts": cfg_mod.iso(), "requestId": request_id, "model": entry["id"],
                     "lane": "http",
                     "status": "schema-invalid" if problems else "ok",
+                    "duration_s": answer.get("latencySeconds"),
                     "resultPath": result_path,
                     "resultSha256": hashlib.sha256(open(result_path, "rb").read()).hexdigest(),
                     "envelopePath": envelope_path,
@@ -2067,10 +2068,10 @@ def cmd_call(args):
             _append_call(project, {
                 "ts": cfg_mod.iso(), "requestId": request_id, "model": final.get("model"),
                 "lane": final.get("lane"), "status": "ok",
+                **_call_meta(args, effective_role),
                 "produceArtifact": produced,
                 "produceArtifactHash": (hashlib.sha256(open(produced, "rb").read()).hexdigest()
                                         if os.path.isfile(produced) else None),
-                **_call_meta(args, effective_role),
             })
         if _json(args):
             emit(json.dumps(final, ensure_ascii=False, indent=2))

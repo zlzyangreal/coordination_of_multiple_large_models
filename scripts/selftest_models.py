@@ -1779,6 +1779,34 @@ def gate_cases(env, work, port_a, port_b):
         "--result", "_work/plan/http.review.json"])
     check("http review: the HTTP call record satisfies the plan gate", code == 0,
           out + err)
+    http_calls = [json.loads(line) for line in
+                  open(os.path.join(gate_project, "_work", "models", "model_calls.jsonl"),
+                       encoding="utf-8") if line.strip()]
+    rich = [row for row in http_calls
+            if row.get("requestId") == http_result["request_id"]
+            and row.get("resultSha256")]
+    check("http review: the rich record keeps the call duration",
+          bool(rich) and rich[-1].get("duration_s") is not None
+          and rich[-1].get("ephemeral") is False, rich[-1] if rich else http_calls)
+
+    # HTTP production: the artifact path/hash are recorded relative to --project.
+    run(gate_project, ["chains", "set", "http-produce", "--models",
+                       "g_r/mock-review"], env)
+    produced = os.path.join(gate_project, "_work", "prod.txt")
+    code, out, err = run(gate_project, [
+        "call", "--chain", "http-produce", "--role", "produce", "--work-package",
+        "WP1", "--produce-artifact", "_work/prod.txt", "--output", produced,
+        "--prompt", "produce"], env)
+    http_calls = [json.loads(line) for line in
+                  open(os.path.join(gate_project, "_work", "models", "model_calls.jsonl"),
+                       encoding="utf-8") if line.strip()]
+    produced_rows = [row for row in http_calls
+                     if row.get("role") == "produce" and row.get("produceArtifactHash")]
+    check("http produce: the artifact path and hash point into the project", code == 0
+          and bool(produced_rows)
+          and produced_rows[-1].get("produceArtifact") == produced
+          and produced_rows[-1].get("produceArtifactHash") == sha(produced),
+          out + err + str(produced_rows[-1] if produced_rows else http_calls))
 
     # Omitted-role models.py calls are production; probe is explicit and text-only.
     noplan = os.path.join(work, "noplan-project")
@@ -1792,9 +1820,19 @@ def gate_cases(env, work, port_a, port_b):
     code, out, err = run(noplan, ["call", "--model", "n_a/mock-ok", "--prompt", "hi",
                                   "--schema", "x.json"], env)
     check("models: schema flags without a review role are refused", code == 2, out + err)
+    run(noplan, ["chains", "set", "plain", "--models", "n_a/mock-ok"], env)
+    code, out, err = run(noplan, ["call", "--chain", "plain", "--prompt", "hi"], env)
+    check("models: an omitted role on a chain is production and needs a plan",
+          code == 2, out + err)
     code, out, err = run(noplan, ["call", "--role", "probe", "--model", "n_a/mock-ok",
                                   "--prompt", "hi", "--output", "out.txt"], env)
     check("models: probe rejects an output path", code == 2, out + err)
+    code, out, err = run(noplan, ["call", "--role", "probe", "--model", "n_a/mock-ok",
+                                  "--prompt", "hi", "--schema", "x.json"], env)
+    check("models: probe rejects a schema", code == 2, out + err)
+    code, out, err = run(noplan, ["call", "--role", "probe", "--model", "n_a/mock-ok",
+                                  "--prompt", "hi", "--work-package", "WP1"], env)
+    check("models: probe rejects a work package", code == 2, out + err)
     code, out, err = run(noplan, ["call", "--role", "probe", "--model", "n_a/mock-ok",
                                   "--prompt", "hi"], env)
     check("models: probe still works as a text-only call", code == 0, out + err)
@@ -1872,6 +1910,20 @@ def gate_cases(env, work, port_a, port_b):
     code, out, err = script(minutes_project, "review_budget.py",
                             ["deliver", "--tier", "B"])
     check("review budget: delivery passes after the minutes row", code == 0, out + err)
+
+    http_minutes = os.path.join(work, "http-minutes")
+    os.makedirs(http_minutes)
+    facts_for(http_minutes)
+    write(os.path.join(http_minutes, "_work", "models", "model_calls.jsonl"),
+          "\n".join(json.dumps({
+              "ts": "2026-10-29T22:00:00+08:00", "requestId": f"H{index}",
+              "model": "g_r/mock-review", "lane": "http", "status": "ok",
+              "role": "review", "milestone": "M3", "protocolVersion": 2,
+              "latencySeconds": 1000}) for index in range(1, 3)) + "\n")
+    code, out, err = script(http_minutes, "review_budget.py",
+                            ["deliver", "--tier", "B"])
+    check("review budget: HTTP review durations count toward minutes", code == 5,
+          out + err)
 
     # ---------------------------------------------------------------- production/deliver
     prod = os.path.join(work, "prod-project")
@@ -2102,6 +2154,12 @@ def gate_cases(env, work, port_a, port_b):
                                  capture_output=True, text=True).stdout.strip() == ""
     check("release: a tag failure keeps the commit and reports recovery", code == 1
           and tag_missing and "Recover with: git tag" in (out + err), out + err)
+    tag_state = subprocess.run(["git", "status", "--porcelain"], cwd=release_root,
+                               capture_output=True, text=True).stdout.strip()
+    head_state = subprocess.run(["git", "log", "-1", "--format=%s"], cwd=release_root,
+                                capture_output=True, text=True).stdout.strip()
+    check("release: a tag failure leaves a clean committed tree", tag_state == ""
+          and head_state == "release: v1.4.0", tag_state + head_state)
     os.remove(ref_hook)
 
     # Branch-push failure keeps the local commit and tag.

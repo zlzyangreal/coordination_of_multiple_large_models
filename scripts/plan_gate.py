@@ -119,7 +119,7 @@ def check_plan(project=".", plan=None, result=None, envelope=None, ledger=None):
     if attempt.get("ephemeral") is not False:
         return fail(4, f"call {request_id} is ephemeral or does not record a persistent call")
     raw = attempt.get("raw") or {}
-    if attempt.get("source") == "runner" and raw.get("ephemeral") is not False:
+    if raw.get("ephemeral") is not False:
         return fail(4, f"call {request_id} does not record ephemeral: false")
     if attempt.get("schema_valid") is not True:
         return fail(4, f"call {request_id} is not schema-valid")
