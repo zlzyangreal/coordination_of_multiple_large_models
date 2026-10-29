@@ -49,6 +49,7 @@ class MockState:
     chat_calls = []
     posts = 0
     key_echo_requests = 0
+    review_payload = None
 
 
 class ChatHandler(BaseHTTPRequestHandler):
@@ -113,6 +114,12 @@ class ChatHandler(BaseHTTPRequestHandler):
                                           "finish_reason": "stop"}],
                              "usage": {"prompt_tokens": 5, "completion_tokens": 2,
                                        "total_tokens": 7}})
+        elif model == "mock-review":
+            self._json(200, {"choices": [{"message": {
+                "content": MockState.review_payload or "{}"},
+                "finish_reason": "stop"}],
+                "usage": {"prompt_tokens": 5, "completion_tokens": 2,
+                          "total_tokens": 7}})
         elif model == "echo-key":
             key = self.headers.get("authorization") or ""
             self._json(200, {"choices": [{"message": {"content": f"your key is {key}"},
@@ -1368,6 +1375,16 @@ def gate_cases(env, work, port_a, port_b):
         fh.write("facts_hash: deadbeef\n")
     code, out, err = script(facts_project, "facts_pack.py", ["check"])
     check("facts_pack: a duplicate hash header is malformed", code == 1, out + err)
+    dup = os.path.join(work, "facts-dup")
+    os.makedirs(dup)
+    write(os.path.join(dup, "_work", "facts_pack.md"),
+          "# F\n\n## budgets\n\n| budget | value |\n|---|---|\n"
+          "| review_calls | 2 per milestone |\n| review_minutes | 30 min |\n")
+    script(dup, "facts_pack.py", ["freeze"])
+    with open(os.path.join(dup, "_work", "facts_pack.md"), "a", encoding="utf-8") as fh:
+        fh.write("facts_version: 3\n")
+    code, out, err = script(dup, "facts_pack.py", ["check"])
+    check("facts_pack: duplicate version/header fields are malformed", code == 1, out + err)
 
     # ---------------------------------------------------------------- test evidence
     evidence_project = os.path.join(work, "evidence-project")
@@ -1454,7 +1471,17 @@ def gate_cases(env, work, port_a, port_b):
     code, out, err = script(evidence_project, "validate_result.py", [
         "--result", result_path, "--envelope", "_work/smoke/env.yaml"])
     check("validator: a real log excerpt is accepted", code == 0, out + err)
-    result["test_refs"][0]["observed"] = "line-25"
+    log_text = open(os.path.join(evidence_project, "_work", "sample.log"),
+                    encoding="utf-8").read()
+    with open(os.path.join(evidence_project, "_work", "sample.log"), "a",
+              encoding="utf-8") as fh:
+        fh.write("appended-after-record\n")
+    code, out, err = script(evidence_project, "validate_result.py", [
+        "--result", result_path, "--envelope", "_work/smoke/env.yaml"])
+    check("validator: a log changed after evidence recording is rejected", code == 1,
+          out + err)
+    write(os.path.join(evidence_project, "_work", "sample.log"), log_text)
+    result["test_refs"][0]["observed"] = "line-25-abcdefghijklmnop"
     write_json(result_path, result)
     code, out, err = script(evidence_project, "validate_result.py", [
         "--result", result_path, "--envelope", "_work/smoke/env.yaml"])
@@ -1481,6 +1508,16 @@ def gate_cases(env, work, port_a, port_b):
     code, out, err = script(evidence_project, "validate_result.py", [
         "--result", result_path, "--envelope", "_work/smoke/env.yaml"])
     check("validator: a facts pack mutated after build is rejected", code == 1, out + err)
+    facts_text = open(os.path.join(evidence_project, "_work", "facts_pack.md"),
+                      encoding="utf-8").read()
+    facts_hash = next((line.split(":", 1)[1].strip()
+                       for line in facts_text.splitlines()
+                       if line.startswith("facts_hash:")), "")
+    write(os.path.join(evidence_project, "_work", "facts_pack.md"),
+          facts_text.replace(f"facts_hash: {facts_hash}", "facts_hash: " + "0" * 64, 1))
+    code, out, err = script(evidence_project, "validate_result.py", [
+        "--result", result_path, "--envelope", "_work/smoke/env.yaml"])
+    check("validator: an edited facts_hash header is rejected", code == 1, out + err)
 
     # ---------------------------------------------------------------- plan gate
     gate_project = os.path.join(work, "gate-project")
@@ -1493,12 +1530,16 @@ def gate_cases(env, work, port_a, port_b):
     run(gate_project, ["add-custom", "g_b", "--base-url", base_b, "--format",
                        "anthropic-messages", "--models", "claude-mock",
                        "--auth", "apiKey"], env)
+    run(gate_project, ["add-custom", "g_r", "--base-url", base_a, "--models",
+                       "mock-review", "--auth", "none"], env)
     run(gate_project, ["key", "set", "g_b", "--from-env", "TEST_KEY"], env)
     config_path = os.path.join(gate_project, "_work", "models", "config.json")
     _patch_config(config_path, lambda cfg: cfg["providers"]["g_a"].__setitem__(
         "overrides", {"mock-ok": {"family": "gate_a"}}))
     _patch_config(config_path, lambda cfg: cfg["providers"]["g_b"].__setitem__(
         "overrides", {"claude-mock": {"family": "gate_b"}}))
+    _patch_config(config_path, lambda cfg: cfg["providers"]["g_r"].__setitem__(
+        "overrides", {"mock-review": {"family": "gate_r"}}))
     facts_for(gate_project)
     write(os.path.join(gate_project, "_work", "plan", "plan.md"), plan_text)
     write(os.path.join(gate_project, "_work", "plan", "review_ledger.md"),
@@ -1638,8 +1679,138 @@ def gate_cases(env, work, port_a, port_b):
     code, out, err = script(gate_project, "plan_gate.py", [
         "check", "--envelope", "_work/plan/env_plan.yaml",
         "--result", "_work/plan/legacy.review.json"])
-    check("plan gate: a v2 envelope with a legacy record is rejected", code == 4,
+    check("plan gate: a v2 envelope with a legacy record is rejected", code == 6,
           out + err)
+
+    # Stale plan, missing binding field, missing booleans, migrated planner.
+    good_plan = open(os.path.join(gate_project, "_work", "plan", "plan.md"),
+                     encoding="utf-8").read()
+    with open(os.path.join(gate_project, "_work", "plan", "plan.md"), "a",
+              encoding="utf-8") as fh:
+        fh.write("\n- changed after review\n")
+    code, out, err = script(gate_project, "plan_gate.py", [
+        "check", "--envelope", "_work/plan/env_plan.yaml",
+        "--result", "_work/plan/plan.review.json"])
+    check("plan gate: a plan changed after review is rejected", code == 4, out + err)
+    write(os.path.join(gate_project, "_work", "plan", "plan.md"), good_plan)
+    code, out, err = script(gate_project, "build_envelope.py", [
+        "--artifact", "_work/plan/plan.md", "--out", "_work/plan/env_plan.yaml",
+        "--ledger", "_work/plan/review_ledger.md",
+        "--unit", "plan::_work/plan/plan.md::work packages", "--scope", "plan review"])
+    check("plan gate: envelope rebuilds after the stale-plan test", code == 0, out + err)
+    env_path, result_path, call = make_plan_review(
+        gate_project, "_work/plan/env_plan.yaml", "_work/plan/plan.review.json",
+        "g_b/claude-mock")
+    call_path = os.path.join(gate_project, "_work", "calls", f"{call['request_id']}.json")
+    saved_call = dict(call)
+    call.pop("artifact_sha256")
+    write_json(call_path, call)
+    code, out, err = script(gate_project, "plan_gate.py", [
+        "check", "--envelope", "_work/plan/env_plan.yaml",
+        "--result", "_work/plan/plan.review.json"])
+    check("plan gate: a missing artifact_sha256 is rejected", code == 4, out + err)
+    call = dict(saved_call, schema_valid=None)
+    write_json(call_path, call)
+    code, out, err = script(gate_project, "plan_gate.py", [
+        "check", "--envelope", "_work/plan/env_plan.yaml",
+        "--result", "_work/plan/plan.review.json"])
+    check("plan gate: a missing schema_valid is rejected", code == 4, out + err)
+    call = dict(saved_call, ephemeral=None)
+    write_json(call_path, call)
+    code, out, err = script(gate_project, "plan_gate.py", [
+        "check", "--envelope", "_work/plan/env_plan.yaml",
+        "--result", "_work/plan/plan.review.json"])
+    check("plan gate: a missing ephemeral is rejected", code == 4, out + err)
+    write_json(call_path, saved_call)
+    write(os.path.join(gate_project, "_work", "plan", "planner.json"),
+          json.dumps({"planner": "g_b/claude-mock", "requestId": "P2",
+                      "plan_sha256": "0" * 64,
+                      "plan_mtime": mtime(os.path.join(gate_project, "_work", "plan",
+                                                       "plan.md"))}))
+    code, out, err = script(gate_project, "plan_gate.py", [
+        "check", "--envelope", "_work/plan/env_plan.yaml",
+        "--result", "_work/plan/plan.review.json"])
+    check("plan gate: a forged planner record is rejected", code == 4, out + err)
+    write(os.path.join(gate_project, "_work", "plan", "planner.json"),
+          json.dumps({"planner": "mystery/none", "requestId": "P2",
+                      "plan_sha256": sha(os.path.join(gate_project, "_work", "plan",
+                                                      "plan.md")),
+                      "plan_mtime": mtime(os.path.join(gate_project, "_work", "plan",
+                                                       "plan.md"))}))
+    write_json(os.path.join(gate_project, "_work", "calls", "P2.json"),
+               {"request_id": "P2", "status": "ok", "model": "mystery/none",
+                "contract": {"pinned": "2.2.0"}})
+    code, out, err = script(gate_project, "plan_gate.py", [
+        "check", "--envelope", "_work/plan/env_plan.yaml",
+        "--result", "_work/plan/plan.review.json"])
+    check("plan gate: an unknown producer family is rejected", code == 6, out + err)
+    os.remove(os.path.join(gate_project, "_work", "plan", "planner.json"))
+    os.remove(os.path.join(gate_project, "_work", "calls", "P2.json"))
+    mixed = json.load(open(os.path.join(gate_project, "_work", "plan", "plan.review.json"),
+                           encoding="utf-8"))
+    mixed["request_id"] = "R-OTHER"
+    write_json(os.path.join(gate_project, "_work", "plan", "mixed.review.json"), mixed)
+    code, out, err = script(gate_project, "plan_gate.py", [
+        "check", "--envelope", "_work/plan/env_plan.yaml",
+        "--result", "_work/plan/mixed.review.json"])
+    check("plan gate: a result mixed from another request is rejected", code == 4,
+          out + err)
+
+    # HTTP review path: the HTTP call record must carry the v2 bindings.
+    code, out, err = script(gate_project, "build_envelope.py", [
+        "--artifact", "_work/plan/plan.md", "--out", "_work/plan/env_http.yaml",
+        "--ledger", "_work/plan/review_ledger.md",
+        "--unit", "plan::_work/plan/plan.md::work packages", "--scope", "http review"])
+    check("http review: envelope builds", code == 0, out + err)
+    http_env = os.path.join(gate_project, "_work", "plan", "env_http.yaml")
+    http_result = result_for(http_env, ["plan"])
+    MockState.review_payload = json.dumps(http_result)
+    run(gate_project, ["chains", "set", "http-review", "--models",
+                       "g_r/mock-review"], env)
+    code, out, err = run(gate_project, [
+        "call", "--chain", "http-review", "--role", "plan-review", "--milestone",
+        "plan", "--request-id", http_result["request_id"], "--prompt", "review",
+        "--schema", os.path.join(SKILL, "assets", "result.schema.json"),
+        "--envelope", http_env, "--result-path", "_work/plan/http.review.json"], env)
+    check("http review: a valid JSON result is accepted and recorded", code == 0,
+          out + err)
+    code, out, err = script(gate_project, "plan_gate.py", [
+        "check", "--envelope", "_work/plan/env_http.yaml",
+        "--result", "_work/plan/http.review.json"])
+    check("http review: the HTTP call record satisfies the plan gate", code == 0,
+          out + err)
+
+    # Omitted-role models.py calls are production; probe is explicit and text-only.
+    noplan = os.path.join(work, "noplan-project")
+    os.makedirs(noplan)
+    run(noplan, ["init"], env)
+    run(noplan, ["add-custom", "n_a", "--base-url", base_a, "--models", "mock-ok",
+                 "--auth", "none"], env)
+    code, out, err = run(noplan, ["call", "--model", "n_a/mock-ok", "--prompt", "hi"], env)
+    check("models: an omitted role is production and needs a reviewed plan", code == 2,
+          out + err)
+    code, out, err = run(noplan, ["call", "--model", "n_a/mock-ok", "--prompt", "hi",
+                                  "--schema", "x.json"], env)
+    check("models: schema flags without a review role are refused", code == 2, out + err)
+    code, out, err = run(noplan, ["call", "--role", "probe", "--model", "n_a/mock-ok",
+                                  "--prompt", "hi", "--output", "out.txt"], env)
+    check("models: probe rejects an output path", code == 2, out + err)
+    code, out, err = run(noplan, ["call", "--role", "probe", "--model", "n_a/mock-ok",
+                                  "--prompt", "hi"], env)
+    check("models: probe still works as a text-only call", code == 0, out + err)
+
+    import argparse as _argparse  # noqa: PLC0415
+    import models as models_mod  # noqa: PLC0415
+    meta = models_mod._call_meta(_argparse.Namespace(
+        role="produce", milestone="M1", work_package="WP1",
+        produce_artifact="out.txt", schema=None, envelope=None, result_path=None))
+    check("models: an HTTP produce record carries its artifact binding",
+          meta.get("role") == "produce" and meta.get("workPackage") == "WP1"
+          and meta.get("produceArtifact", "").endswith("out.txt")
+          and meta.get("ephemeral") is False and meta.get("protocolVersion") == 2, meta)
+    check("models: an omitted role is production even with a schema",
+          models_mod._effective_role(_argparse.Namespace(role=None, schema="x.json"))
+          == "produce")
 
     # ---------------------------------------------------------------- review budget
     budget_project = os.path.join(work, "budget-project")
@@ -1686,6 +1857,22 @@ def gate_cases(env, work, port_a, port_b):
     check("review budget: report counts the milestone", report.get("milestones")
           and report["milestones"][0].get("review_calls") == 2, report_text)
 
+    minutes_project = os.path.join(work, "minutes-project")
+    os.makedirs(minutes_project)
+    facts_for(minutes_project)
+    write_json(os.path.join(minutes_project, "_work", "calls", "M1.json"), {
+        "request_id": "M1", "status": "ok", "role": "review", "milestone": "M2",
+        "duration_s": 1900, "model": "g_b/claude-mock", "protocol_version": 2})
+    code, out, err = script(minutes_project, "review_budget.py",
+                            ["deliver", "--tier", "B"])
+    check("review budget: 31 minutes exceeds the 30-minute budget", code == 5, out + err)
+    code, out, err = script(minutes_project, "review_budget.py",
+                            ["note-minutes", "--milestone", "M2", "--reason", "over"])
+    check("review budget: a minutes row unblocks delivery", code == 0, out + err)
+    code, out, err = script(minutes_project, "review_budget.py",
+                            ["deliver", "--tier", "B"])
+    check("review budget: delivery passes after the minutes row", code == 0, out + err)
+
     # ---------------------------------------------------------------- production/deliver
     prod = os.path.join(work, "prod-project")
     os.makedirs(prod)
@@ -1724,6 +1911,16 @@ def gate_cases(env, work, port_a, port_b):
     check("deliver: B is exempt from the GPT production rule", code == 0, out + err)
     produce["routing_tier"] = "S"
     write_json(os.path.join(prod, "_work", "calls", "P1.json"), produce)
+    produce.pop("produce_artifact_hash")
+    write_json(os.path.join(prod, "_work", "calls", "P1.json"), produce)
+    code, out, err = script(prod, "review_budget.py", ["deliver", "--tier", "S"])
+    check("deliver: a missing artifact hash is refused", code == 5, out + err)
+    produce["produce_artifact_hash"] = "0" * 64
+    write_json(os.path.join(prod, "_work", "calls", "P1.json"), produce)
+    code, out, err = script(prod, "review_budget.py", ["deliver", "--tier", "S"])
+    check("deliver: a wrong artifact hash is refused", code == 5, out + err)
+    produce["produce_artifact_hash"] = sha(artifact)
+    write_json(os.path.join(prod, "_work", "calls", "P1.json"), produce)
     approval = os.path.join(prod, "_work", "gates", "approval.md")
     write(approval, "user approved the deviation\n")
     code, out, err = script(prod, "review_budget.py",
@@ -1731,6 +1928,11 @@ def gate_cases(env, work, port_a, port_b):
                              "--reason", "lead produced this delivery"])
     check("deliver: a stored approval is required and recorded", code == 0, out + err)
     os.remove(os.path.join(prod, "_work", "calls", "P1.json"))
+    with open(approval, "a", encoding="utf-8") as fh:
+        fh.write("tampered\n")
+    code, out, err = script(prod, "review_budget.py", ["deliver", "--tier", "S"])
+    check("deliver: a tampered approval file is refused", code == 5, out + err)
+    write(approval, "user approved the deviation\n")
     code, out, err = script(prod, "review_budget.py", ["deliver", "--tier", "S"])
     check("deliver: an approved deviation unblocks S/A without a produce unit", code == 0,
           out + err)
@@ -1830,6 +2032,8 @@ def gate_cases(env, work, port_a, port_b):
     with open(os.path.join(release_root, "README.md"), "a", encoding="utf-8") as fh:
         fh.write("\n`selftest_models.py`\n")
     git = subprocess.run(["git", "init"], cwd=release_root, capture_output=True, text=True)
+    subprocess.run(["git", "config", "core.autocrlf", "false"], cwd=release_root,
+                   capture_output=True)
     subprocess.run(["git", "config", "user.email", "test@example.invalid"],
                    cwd=release_root, capture_output=True)
     subprocess.run(["git", "config", "user.name", "test"], cwd=release_root,
@@ -1863,6 +2067,87 @@ def gate_cases(env, work, port_a, port_b):
     code, out, err = script(release_root, "release.py",
                             ["--version", "1.2.0", "--note", "x", "--no-push"])
     check("release: an existing tag is refused", code == 1, out + err)
+
+    # Commit failure: docs and index restored, HEAD unchanged.
+    head_before = subprocess.run(["git", "rev-parse", "HEAD"], cwd=release_root,
+                                 capture_output=True, text=True).stdout.strip()
+    hook = os.path.join(release_root, ".git", "hooks", "pre-commit")
+    write(hook, "#!/bin/sh\nexit 1\n")
+    try:
+        os.chmod(hook, 0o755)
+    except OSError:
+        pass
+    code, out, err = script(release_root, "release.py",
+                            ["--version", "1.3.0", "--note", "x", "--no-push"])
+    status = subprocess.run(["git", "status", "--porcelain"], cwd=release_root,
+                            capture_output=True, text=True).stdout.strip()
+    head_after = subprocess.run(["git", "rev-parse", "HEAD"], cwd=release_root,
+                                capture_output=True, text=True).stdout.strip()
+    check("release: a failed commit restores docs and index", code == 1
+          and head_before == head_after and status == "", out + err + status)
+    os.remove(hook)
+
+    # Tag creation failure keeps the release commit.
+    ref_hook = os.path.join(release_root, ".git", "hooks", "reference-transaction")
+    write(ref_hook, "#!/bin/sh\n[ \"$1\" = \"prepared\" ] || exit 0\n"
+                    "while read old new ref; do case \"$ref\" in "
+                    "refs/tags/v1.4.0) exit 1 ;; esac; done\nexit 0\n")
+    try:
+        os.chmod(ref_hook, 0o755)
+    except OSError:
+        pass
+    code, out, err = script(release_root, "release.py",
+                            ["--version", "1.4.0", "--note", "x", "--no-push"])
+    tag_missing = subprocess.run(["git", "tag", "--list", "v1.4.0"], cwd=release_root,
+                                 capture_output=True, text=True).stdout.strip() == ""
+    check("release: a tag failure keeps the commit and reports recovery", code == 1
+          and tag_missing and "Recover with: git tag" in (out + err), out + err)
+    os.remove(ref_hook)
+
+    # Branch-push failure keeps the local commit and tag.
+    remote = os.path.join(work, "release-remote.git")
+    subprocess.run(["git", "init", "--bare", remote], capture_output=True, text=True)
+    subprocess.run(["git", "remote", "add", "origin", remote], cwd=release_root,
+                   capture_output=True)
+    subprocess.run(["git", "config", "branch.master.remote", "origin"],
+                   cwd=release_root, capture_output=True)
+    subprocess.run(["git", "config", "branch.master.merge", "refs/heads/master"],
+                   cwd=release_root, capture_output=True)
+    reject = os.path.join(remote, "hooks", "pre-receive")
+    write(reject, "#!/bin/sh\nexit 1\n")
+    try:
+        os.chmod(reject, 0o755)
+    except OSError:
+        pass
+    code, out, err = script(release_root, "release.py",
+                            ["--version", "1.5.0", "--note", "x"])
+    local_tag = subprocess.run(["git", "tag", "--list", "v1.5.0"], cwd=release_root,
+                               capture_output=True, text=True).stdout.strip()
+    check("release: a branch-push failure keeps the local commit and tag", code == 1
+          and local_tag == "v1.5.0" and "Recover with: git push" in (out + err),
+          out + err)
+
+    # Branch accepted, tag rejected on a fresh remote: the local tag survives.
+    remote2 = os.path.join(work, "release-remote2.git")
+    subprocess.run(["git", "init", "--bare", remote2], capture_output=True, text=True)
+    reject2 = os.path.join(remote2, "hooks", "pre-receive")
+    write(reject2, "#!/bin/sh\nwhile read old new ref; do case \"$ref\" in "
+                   "refs/tags/*) exit 1 ;; esac; done\nexit 0\n")
+    try:
+        os.chmod(reject2, 0o755)
+    except OSError:
+        pass
+    subprocess.run(["git", "remote", "set-url", "origin", remote2], cwd=release_root,
+                   capture_output=True)
+    code, out, err = script(release_root, "release.py",
+                            ["--version", "1.6.0", "--note", "x"])
+    remote_tag = subprocess.run(["git", "--git-dir", remote2, "tag", "--list", "v1.6.0"],
+                                capture_output=True, text=True).stdout.strip()
+    local_tag = subprocess.run(["git", "tag", "--list", "v1.6.0"], cwd=release_root,
+                               capture_output=True, text=True).stdout.strip()
+    check("release: a tag-push failure keeps the local tag", code == 1
+          and remote_tag == "" and local_tag == "v1.6.0"
+          and "Recover with: git push origin v1.6.0" in (out + err), out + err)
 
 
 if __name__ == "__main__":

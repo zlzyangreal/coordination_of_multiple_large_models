@@ -651,7 +651,9 @@ def project_lock(project=".", timeout=30.0, stale_after=120.0):
         try:
             handle = os.open(lock_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
             break
-        except FileExistsError:
+        except (FileExistsError, PermissionError):
+            # On Windows a concurrent create/remove can surface as EACCES; treat it
+            # exactly like "lock is held" and retry under the same deadline.
             try:
                 age = time.time() - os.path.getmtime(lock_path)
             except OSError:

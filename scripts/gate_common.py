@@ -349,6 +349,10 @@ def family_of(model_id, project=".", entries=None):
     if model_id.startswith("dsh:") and registry:
         return {"id": model_id, "family": registry.family("dsh"), "known": True,
                 "source": "lane"}
+    if "/" not in model_id and ":" not in model_id and registry:
+        # A bare slug in a runner record is the codex lane (run_gpt is its only writer).
+        return {"id": model_id, "family": registry.family("codex"), "known": True,
+                "source": "lane"}
     return {"id": model_id, "family": None, "known": False, "source": "unknown"}
 
 
@@ -398,7 +402,9 @@ def canonical_facts_body(text):
 def facts_info(path):
     info = {"path": os.path.abspath(path), "exists": os.path.isfile(path),
             "version": None, "declared_hash": None, "actual_hash": None, "frozen_at": None,
-            "header_count": 0, "stale": None, "budgets": {}}
+            "header_count": 0, "header_counts": {"facts_version": 0, "facts_hash": 0,
+                                                 "frozen_at": 0},
+            "stale": None, "budgets": {}}
     if not os.path.isfile(path):
         return info
     text = read_text(path)
@@ -407,7 +413,9 @@ def facts_info(path):
         match = FACTS_RE.match(line)
         if match:
             headers.append((match.group(1), match.group(2).strip().strip('"')))
-    info["header_count"] = len([1 for key, _ in headers if key == "facts_hash"])
+    for key, _value in headers:
+        info["header_counts"][key] = info["header_counts"].get(key, 0) + 1
+    info["header_count"] = info["header_counts"]["facts_hash"]
     for key, value in headers:
         if key == "facts_version":
             info["version"] = value

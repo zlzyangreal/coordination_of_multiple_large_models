@@ -156,11 +156,14 @@ def check(path):
     info = common.facts_info(path)
     if not info["exists"]:
         return 2, f"facts pack not found: {os.path.abspath(path)}", info
-    if info["header_count"] == 0:
-        return 3, ("facts pack has no facts_version/facts_hash; run `facts_pack.py freeze` "
-                   "before building an envelope"), info
-    if info["header_count"] > 1:
-        return 1, "facts pack has more than one facts_hash header", info
+    counts = info.get("header_counts") or {}
+    for key in ("facts_version", "facts_hash", "frozen_at"):
+        count = counts.get(key, 0)
+        if count == 0:
+            return 3, (f"facts pack has no {key} header; run `facts_pack.py freeze` "
+                       f"before building an envelope"), info
+        if count > 1:
+            return 1, f"facts pack has {count} {key} headers; exactly one is allowed", info
     if not info["version"]:
         return 3, "facts pack has no facts_version; run `facts_pack.py freeze`", info
     if info["declared_hash"] != info["actual_hash"]:

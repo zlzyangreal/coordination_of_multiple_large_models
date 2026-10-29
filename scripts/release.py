@@ -237,17 +237,23 @@ def main():
     write(root, README, new_readme)
     post = check_all(root, count)
     if post:
-        git(root, "restore", "--source=HEAD", "--", SKILL, README)
+        git(root, "restore", "--source=HEAD", "--staged", "--worktree", "--", SKILL, README)
         for issue in post:
             print(f"[FAIL] {issue['code']}: {issue['message']}", file=sys.stderr)
         print("[FAIL] post-edit check failed; SKILL.md/README.md restored", file=sys.stderr)
         return 1
 
-    git(root, "add", "--", SKILL, README, check=True)
+    added = git(root, "add", "--", SKILL, README)
+    if added.returncode != 0:
+        git(root, "restore", "--source=HEAD", "--staged", "--worktree", "--", SKILL, README)
+        print("[FAIL] staging failed; docs restored", file=sys.stderr)
+        print((added.stderr or added.stdout).strip(), file=sys.stderr)
+        return 1
     commit = git(root, "commit", "-m", f"release: v{args.version}")
     if commit.returncode != 0:
-        git(root, "restore", "--source=HEAD", "--", SKILL, README)
-        print("[FAIL] commit failed; docs restored (feature work untouched)", file=sys.stderr)
+        git(root, "restore", "--source=HEAD", "--staged", "--worktree", "--", SKILL, README)
+        print("[FAIL] commit failed; docs and index restored (feature work untouched)",
+              file=sys.stderr)
         print((commit.stderr or commit.stdout).strip(), file=sys.stderr)
         return 1
     tag = git(root, "tag", f"v{args.version}")

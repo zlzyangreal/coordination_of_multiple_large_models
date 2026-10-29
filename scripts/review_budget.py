@@ -85,7 +85,7 @@ def _evaluate(project, milestone, request_id=None, why_unclosed=None, budget_cha
         return 2, {"message": f"facts pack is not usable: {message}"}
     prior = _prior(project, milestone, request_id)
     count = len(prior)
-    minutes = round(sum(float(item.get("duration_s") or 0) for item in prior), 1)
+    minutes = round(sum(float(item.get("duration_s") or 0) for item in prior) / 60.0, 1)
     budget_calls = info["budgets"].get("review_calls", 2)
     budget_minutes = info["budgets"].get("review_minutes", 30)
     data = {
@@ -200,11 +200,12 @@ def raise_budget(project, to, reason, milestone=None):
                "message": f"review_calls {before}->{to}; facts pack re-frozen"}
 
 
-def note_minutes(project, milestone, reason):
+def note_minutes(project, milestone, reason, minutes=None):
     if not milestone or not reason.strip():
         return 2, {"message": "note-minutes needs --milestone and --reason"}
-    minutes = round(sum(float(item.get("duration_s") or 0) for item in
-                        _prior(project, milestone)), 1)
+    if minutes is None:
+        minutes = round(sum(float(item.get("duration_s") or 0) for item in
+                            _prior(project, milestone)) / 60.0, 1)
     common.append_event(project, "minutes", milestone=milestone, reason=reason,
                         after=minutes)
     return 0, {"milestone": milestone, "minutes": minutes, "message": "minutes notice logged"}
@@ -316,8 +317,10 @@ def deliver(project, tier=None):
         if not artifact or not os.path.isfile(artifact):
             problems.append(f"{request_id}: produced artifact is missing ({artifact})")
             continue
-        if item.get("produce_artifact_hash") and \
-                item["produce_artifact_hash"] != common.sha256_file(artifact):
+        if not item.get("produce_artifact_hash"):
+            problems.append(f"{request_id}: produce call has no artifact hash")
+            continue
+        if item["produce_artifact_hash"] != common.sha256_file(artifact):
             problems.append(f"{request_id}: artifact hash no longer matches")
             continue
         decision = _adoption(project, request_id)
@@ -375,7 +378,7 @@ def deliver(project, tier=None):
         if extra > overrides:
             problems.append(f"{milestone}: {len(items)} review calls exceed budget "
                             f"{budget_calls} without {extra} override row(s)")
-        minutes = sum(float(item.get("duration_s") or 0) for item in items)
+        minutes = sum(float(item.get("duration_s") or 0) for item in items) / 60.0
         if minutes > budget_minutes and not [event for event in events
                                              if event.get("kind") == "minutes"
                                              and event.get("milestone") == milestone]:
@@ -408,7 +411,8 @@ def report(project, as_json=False):
         rows.append({
             "milestone": milestone,
             "review_calls": len(items),
-            "minutes": round(sum(float(item.get("duration_s") or 0) for item in items), 1),
+            "minutes": round(sum(float(item.get("duration_s") or 0)
+                                for item in items) / 60.0, 1),
             "produce_calls": sum(1 for item in attempts if item.get("role") == "produce"
                                  and item.get("milestone") == milestone),
             "adoptions": len([event for event in events if event.get("kind") == "adopt"

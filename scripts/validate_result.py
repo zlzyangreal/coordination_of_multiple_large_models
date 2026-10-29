@@ -27,6 +27,7 @@ if hasattr(sys.stdout, "reconfigure"):
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
+import facts_pack  # noqa: E402
 import gate_common as common  # noqa: E402
 
 DEFAULT_SCHEMA = os.path.join(HERE, "..", "assets", "result.schema.json")
@@ -183,13 +184,15 @@ def check_facts(env, result, errors):
     if str(result.get("facts_version") or "") != str(declared_version):
         errors.append(f"$.facts_version: {result.get('facts_version')!r} != envelope "
                       f"{declared_version!r}")
-    info = common.facts_info(_abs_path(facts_path))
-    if not info["exists"]:
-        errors.append(f"facts pack not found: {facts_path}")
+    code, message, info = facts_pack.check(_abs_path(facts_path))
+    if code != 0:
+        errors.append(f"facts pack: {message}")
         return
-    if info["actual_hash"] != str(declared_hash):
-        errors.append("facts pack changed after the envelope was built; re-freeze and "
-                      "rebuild the envelope")
+    if str(info.get("version")) != str(declared_version):
+        errors.append(f"facts pack version {info.get('version')!r} != envelope "
+                      f"{declared_version!r}")
+    if str(info.get("declared_hash")) != str(declared_hash):
+        errors.append("facts pack hash header changed after the envelope was built")
 
 
 def check_test_refs(env, result, errors, warnings):
@@ -227,6 +230,12 @@ def check_test_refs(env, result, errors, warnings):
             errors.append(f"{path}.observed: needs at least 20 characters from the log")
             continue
         log_path = _abs_path(item.get("log_path"))
+        if not os.path.isfile(log_path):
+            errors.append(f"{path}: evidence log not readable: {item.get('log_path')}")
+            continue
+        if common.sha256_file(log_path) != str(item.get("log_sha256") or ""):
+            errors.append(f"{path}: the evidence log changed after it was recorded")
+            continue
         try:
             with open(log_path, encoding="utf-8-sig", errors="replace") as fh:
                 log_text = fh.read()

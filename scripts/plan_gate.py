@@ -116,11 +116,14 @@ def check_plan(project=".", plan=None, result=None, envelope=None, ledger=None):
     report["reviewer_model"] = attempt.get("model")
     if attempt.get("status") != "ok":
         return fail(4, f"call {request_id} has status {attempt.get('status')!r}, not 'ok'")
-    if attempt.get("ephemeral"):
-        return fail(4, f"call {request_id} is ephemeral; review evidence must persist")
-    if attempt.get("schema_valid") is False:
-        return fail(4, f"call {request_id} is schema-invalid")
-    ok(f"call record {request_id} is ok")
+    if attempt.get("ephemeral") is not False:
+        return fail(4, f"call {request_id} is ephemeral or does not record a persistent call")
+    raw = attempt.get("raw") or {}
+    if attempt.get("source") == "runner" and raw.get("ephemeral") is not False:
+        return fail(4, f"call {request_id} does not record ephemeral: false")
+    if attempt.get("schema_valid") is not True:
+        return fail(4, f"call {request_id} is not schema-valid")
+    ok(f"call record {request_id} is ok and schema-valid")
 
     env_version = _as_text(env.get("envelope_version"))
     pinned = _as_text((attempt.get("contract") or {}).get("pinned")) or \
@@ -130,9 +133,9 @@ def check_plan(project=".", plan=None, result=None, envelope=None, ledger=None):
                           "v2": bool(is_v2)}
     if is_v2:
         if _as_text(attempt.get("protocol_version")) != "2":
-            return fail(4, "v2 evidence requires protocol_version: 2 in the call record")
+            return fail(6, "v2 evidence requires protocol_version: 2 in the call record")
         if attempt.get("role") not in common.REVIEW_ROLES:
-            return fail(4, f"v2 review call has role {attempt.get('role')!r}; expected one "
+            return fail(6, f"v2 review call has role {attempt.get('role')!r}; expected one "
                            f"of {common.REVIEW_ROLES}")
         required = ("envelope_sha256", "result_path", "result_sha256", "artifact",
                     "artifact_sha256")

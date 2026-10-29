@@ -1454,19 +1454,21 @@ def _codex_call(args, entry, prompt, project, request_id, request_path, role=Non
 
 
 def _effective_role(args):
-    if getattr(args, "role", None):
-        return args.role
-    return "review" if getattr(args, "schema", None) else "produce"
+    # An omitted models.py role is always production; review must be explicit.
+    return getattr(args, "role", None) or "produce"
 
 
 def _call_meta(args, role=None):
     role = role or _effective_role(args)
+    artifact = getattr(args, "produce_artifact", None)
     return {
         "protocolVersion": 2,
         "role": role,
         "roleSource": "explicit" if getattr(args, "role", None) else "inferred",
         "milestone": getattr(args, "milestone", None),
         "workPackage": getattr(args, "work_package", None),
+        "produceArtifact": os.path.abspath(artifact) if artifact else None,
+        "ephemeral": False,
         "tierSource": "unavailable",
     }
 
@@ -1879,7 +1881,10 @@ def cmd_call(args):
                        if args.role == "plan" else
                        f"; role {args.role!r} is the lead session itself"), 2)
     role_source = "explicit" if args.role else "inferred"
-    effective_role = args.role or ("review" if args.schema else "produce")
+    if not args.role and (args.schema or args.envelope or args.result_path):
+        return fail("review flags require an explicit --role review|plan-review; an "
+                    "omitted role is production and runs the plan gate", 2)
+    effective_role = args.role or "produce"
     if effective_role == "probe":
         forbidden = [flag for flag, value in (("--output", args.output),
                                              ("--result-path", args.result_path),
@@ -1933,6 +1938,7 @@ def cmd_call(args):
     final = None
     status = 5
     review_reserved = False
+    review_info = None
     for entry in links:
         if entry["lane"] == "dsh":
             message = ("the dsh lane is the lead session and cannot be called from a "
@@ -1969,29 +1975,53 @@ def cmd_call(args):
                 emit(f"[FAIL] review budget: {info.get('message')}")
                 return 2
             review_reserved = True
+            review_info = info
         status, answer, message = _http_call(args, entry, prompt, cfg, project,
                                              request_id, attempts)
         if status == 0:
             if effective_role in ("review", "plan-review"):
-                result_path = os.path.abspath(args.result_path)
+                result_path = os.path.abspath(os.path.join(project, args.result_path))
                 os.makedirs(os.path.dirname(result_path) or ".", exist_ok=True)
                 with open(result_path, "w", encoding="utf-8", newline="\n") as fh:
                     fh.write(answer["text"].rstrip() + "\n")
-                from validate_result import validate_files  # noqa: PLC0415
+                from validate_result import load_envelope, validate_files  # noqa: PLC0415
+                envelope_path = os.path.abspath(args.envelope)
+                try:
+                    env_info = load_envelope(envelope_path)
+                except (OSError, ValueError):
+                    env_info = {}
                 try:
                     _, problems, _ = validate_files(
-                        result_path, os.path.abspath(args.schema),
-                        os.path.abspath(args.envelope))
+                        result_path, os.path.abspath(args.schema), envelope_path)
                 except (OSError, ValueError) as exc:
                     problems = [str(exc)]
-                _append_call(project, {
+                review_record = {
                     "ts": cfg_mod.iso(), "requestId": request_id, "model": entry["id"],
-                    "lane": "http", "status": "ok", "resultPath": result_path,
+                    "lane": "http",
+                    "status": "schema-invalid" if problems else "ok",
+                    "resultPath": result_path,
                     "resultSha256": hashlib.sha256(open(result_path, "rb").read()).hexdigest(),
+                    "envelopePath": envelope_path,
                     "envelopeSha256": hashlib.sha256(
-                        open(os.path.abspath(args.envelope), "rb").read()).hexdigest(),
-                    "schemaValid": not problems, **_call_meta(args, effective_role),
-                })
+                        open(envelope_path, "rb").read()).hexdigest(),
+                    "artifact": env_info.get("artifact"),
+                    "artifactSha256": env_info.get("version_hash"),
+                    "schemaValid": not problems,
+                    **_call_meta(args, effective_role),
+                }
+                if review_info:
+                    total_minutes = round(float(review_info.get("prior_minutes") or 0)
+                                          + float(answer.get("latencySeconds") or 0) / 60.0,
+                                          1)
+                    over = total_minutes > float(review_info.get("review_minutes") or 30)
+                    review_record["minutesTotal"] = total_minutes
+                    review_record["minutesOver"] = over
+                    if over:
+                        budget_mod.note_minutes(
+                            project, args.milestone,
+                            f"auto: {total_minutes} min > "
+                            f"{review_info.get('review_minutes')} min", minutes=total_minutes)
+                _append_call(project, review_record)
                 if problems:
                     emit("[FAIL] review result is not adoptable: " + "; ".join(problems[:4]))
                     status = 3
@@ -2032,6 +2062,16 @@ def cmd_call(args):
             with open(args.output, "w", encoding="utf-8", newline="\n") as fh:
                 fh.write(final["text"].rstrip() + "\n")
             final["output"] = os.path.abspath(args.output)
+        if effective_role == "produce" and args.produce_artifact:
+            produced = os.path.abspath(os.path.join(project, args.produce_artifact))
+            _append_call(project, {
+                "ts": cfg_mod.iso(), "requestId": request_id, "model": final.get("model"),
+                "lane": final.get("lane"), "status": "ok",
+                "produceArtifact": produced,
+                "produceArtifactHash": (hashlib.sha256(open(produced, "rb").read()).hexdigest()
+                                        if os.path.isfile(produced) else None),
+                **_call_meta(args, effective_role),
+            })
         if _json(args):
             emit(json.dumps(final, ensure_ascii=False, indent=2))
         else:

@@ -64,6 +64,10 @@ try:
 except Exception:  # noqa: BLE001
     review_budget = None
 try:
+    import facts_pack
+except Exception:  # noqa: BLE001
+    facts_pack = None
+try:
     from validate_result import load_envelope
 except Exception:  # noqa: BLE001
     load_envelope = None
@@ -288,12 +292,16 @@ def facts_guard(envelope_path):
     if not facts_path:
         return None
     path = facts_path if os.path.isabs(str(facts_path)) else os.path.abspath(str(facts_path))
-    info = common.facts_info(path)
-    if not info["exists"]:
-        return f"facts pack not found: {path}"
-    if str(declared) != info["actual_hash"]:
-        return (f"facts pack changed after the envelope was built ({path}); re-freeze and "
-                f"rebuild the envelope")
+    if not facts_pack:
+        return "facts_pack helper unavailable"
+    code, message, info = facts_pack.check(path)
+    if code != 0:
+        return message
+    if str(declared) != str(info.get("declared_hash")):
+        return (f"facts pack hash header changed after the envelope was built ({path}); "
+                f"re-freeze and rebuild the envelope")
+    if str(env.get("facts_version")) != str(info.get("version")):
+        return (f"facts pack version changed ({info.get('version')}); rebuild the envelope")
     return None
 
 
@@ -541,6 +549,19 @@ def main():
         if not schema_valid:
             status = "schema-invalid"
 
+    call_duration = round(time.time() - started, 1)
+    if role in REVIEW_ROLES and budget_info:
+        total_minutes = round(float(budget_info.get("prior_minutes") or 0)
+                              + call_duration / 60.0, 1)
+        over = total_minutes > float(budget_info.get("review_minutes") or 30)
+        budget_info["minutes_total"] = total_minutes
+        budget_info["minutes_over"] = over
+        if over:
+            review_budget.note_minutes(
+                project, args.milestone,
+                f"auto: {total_minutes} min > {budget_info.get('review_minutes')} min",
+                minutes=total_minutes)
+
     delta = None
     if isinstance(before.get("used"), (int, float)) and isinstance(after.get("used"), (int, float)):
         delta = round(after["used"] - before["used"], 1)
@@ -585,7 +606,7 @@ def main():
         "tier_source": "quota" if before.get("tier") else "unavailable",
         "started_at": started_iso,
         "finished_at": finished_iso,
-        "duration_s": round(time.time() - started, 1),
+        "duration_s": call_duration,
         "cwd": cwd,
         "model": model,
         "effort": effort,
