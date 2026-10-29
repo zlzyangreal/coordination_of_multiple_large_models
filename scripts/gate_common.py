@@ -288,7 +288,7 @@ def all_attempts(project="."):
     def binding_score(record):
         return sum(bool(record.get(key)) for key in
                    ("role", "milestone", "envelope_sha256", "result_sha256",
-                    "artifact_sha256", "protocol_version"))
+                    "artifact_sha256", "produce_artifact_hash", "protocol_version"))
 
     for record in http_records(project):
         current = merged.get(record["request_id"])

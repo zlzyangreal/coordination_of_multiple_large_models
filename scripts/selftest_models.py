@@ -1305,6 +1305,7 @@ def plan_cases(env, work, port_a, port_b):
 def gate_cases(env, work, port_a, port_b):
     """v2.2 gates: plan review, budget, facts, evidence, production, identity, release."""
     import check_docs  # noqa: PLC0415
+    import gate_common  # noqa: PLC0415
     import review_budget  # noqa: PLC0415
 
     def script(project, name, args, extra_env=None):
@@ -1792,21 +1793,31 @@ def gate_cases(env, work, port_a, port_b):
     # HTTP production: the artifact path/hash are recorded relative to --project.
     run(gate_project, ["chains", "set", "http-produce", "--models",
                        "g_r/mock-review"], env)
-    produced = os.path.join(gate_project, "_work", "prod.txt")
+    produced = os.path.join(gate_project, "out.txt")
     code, out, err = run(gate_project, [
         "call", "--chain", "http-produce", "--role", "produce", "--work-package",
-        "WP1", "--produce-artifact", "_work/prod.txt", "--output", produced,
-        "--prompt", "produce"], env)
+        "WP1", "--produce-artifact", "out.txt", "--output", produced,
+        "--request-id", "RHTTPPROD1", "--prompt", "produce"], env)
     http_calls = [json.loads(line) for line in
                   open(os.path.join(gate_project, "_work", "models", "model_calls.jsonl"),
                        encoding="utf-8") if line.strip()]
     produced_rows = [row for row in http_calls
                      if row.get("role") == "produce" and row.get("produceArtifactHash")]
+    attempt = gate_common.find_attempt(gate_project, "RHTTPPROD1")
     check("http produce: the artifact path and hash point into the project", code == 0
           and bool(produced_rows)
           and produced_rows[-1].get("produceArtifact") == produced
-          and produced_rows[-1].get("produceArtifactHash") == sha(produced),
-          out + err + str(produced_rows[-1] if produced_rows else http_calls))
+          and produced_rows[-1].get("produceArtifactHash") == sha(produced), out + err)
+    check("http produce: the merged attempt carries the project path and hash",
+          attempt and attempt.get("produce_artifact") == produced
+          and attempt.get("produce_artifact_hash") == sha(produced), attempt)
+    code, out, err = script(gate_project, "review_budget.py", [
+        "adopt", "--request-id", "RHTTPPROD1", "--decision", "adopted",
+        "--reason", "http produced"])
+    code2, out2, err2 = script(gate_project, "review_budget.py", [
+        "deliver", "--tier", "S"])
+    check("http produce: delivery accepts the produced work package", code == 0
+          and code2 == 0, out + err + out2 + err2)
 
     # Omitted-role models.py calls are production; probe is explicit and text-only.
     noplan = os.path.join(work, "noplan-project")

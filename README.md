@@ -4,7 +4,7 @@
 
 - 仓库：<https://github.com/zlzyangreal/coordination_of_multiple_large_models>
 - 版本：2.2.0（2026-10-28）
-- 当前离线自测：258 项（mock providers，不联网）
+- 当前离线自测：260 项（mock providers，不联网）
 - 本版把 v2.1 的"流程约定"落成**可执行门禁**：方案评审门（`plan_gate.py`）、评审轮次/分钟预算（`review_budget.py`）、事实包版本与哈希（`facts_pack.py`）、评审测试证据（`test_evidence.py`）、GPT 生产核算与交付门、工作区身份 pin（`session.py`），以及发版一致性脚本（`check_docs.py` + `release.py`）。目标是把"先实现、再让另一个模型挑错"改成"方案先独立评审、评审有预算、结论有证据"。
 - 上一代：`多模型协作Spec.md` v2.4.1，已冻结，仅作留档
 
@@ -327,7 +327,7 @@ python scripts/quota.py --note "交稿前"                  # 往 _work/quota_le
 
 | 版本 | 日期 | 变更 |
 |---|---|---|
-| 2.2.0 | 2026-10-28 | 可执行门禁：方案评审门（`plan_gate.py`：hash/mtime/信封/调用记录/家族）、评审轮次与分钟预算（`review_budget.py`：原子预留、第 3 轮 `--why-unclosed`、`raise`/一次性豁免、事件日志）、GPT 生产核算与交付门（S/A 至少一个 WP 产物 + 采纳结论）、测试证据（`test_evidence.py` + 信封 `test_evidence` + 结果 `test_refs` 日志原文校验）、事实包版本与哈希（`facts_pack.py`，构建/启动/校验三处重哈希）、工作区身份 pin（根路径/盘符/卷序列/git HEAD）、发版一致性（`check_docs.py --run-tests` + `release.py`）；`models.py call` 无 role 视为 produce 并过方案门，`probe` 仅文本；SKILL 增至 26 条硬规则。设计经过 4 轮独立 GPT 评审（最后一轮 0 findings、confidence high）；258 项离线自测 |
+| 2.2.0 | 2026-10-28 | 可执行门禁：方案评审门（`plan_gate.py`：hash/mtime/信封/调用记录/家族）、评审轮次与分钟预算（`review_budget.py`：原子预留、第 3 轮 `--why-unclosed`、`raise`/一次性豁免、事件日志）、GPT 生产核算与交付门（S/A 至少一个 WP 产物 + 采纳结论）、测试证据（`test_evidence.py` + 信封 `test_evidence` + 结果 `test_refs` 日志原文校验）、事实包版本与哈希（`facts_pack.py`，构建/启动/校验三处重哈希）、工作区身份 pin（根路径/盘符/卷序列/git HEAD）、发版一致性（`check_docs.py --run-tests` + `release.py`）；`models.py call` 无 role 视为 produce 并过方案门，`probe` 仅文本；SKILL 增至 26 条硬规则。设计经过 4 轮独立 GPT 评审（最后一轮 0 findings、confidence high）；260 项离线自测 |
 | 2.1.0 | 2026-10-27 | 方案设计与任务分发分离：新增 `plan` 角色与 `models.py plan`，按 Reasoning/Design/Agentic/Coding 评分选 planner（可在 `overrides.<model>.scores` 覆盖），先独立评审方案再由 lead 分发；`call --role plan` 拒绝；dsh planner 由会话自己写；155 项离线自测 |
 | 2.0.0 | 2026-10-27 | 大版本：接入 dsh-our-free-model 的多渠道模型能力，并加入任务团队入队审批。多平台模型接入与统一管理：新增 `scripts/models.py`（init/providers/add/key/account/list/discover/test/use/route/chains/call/health/budget/doctor）、`model_registry.py`（内置 76 家提供商注册表 + id 语法）、`model_config.py`（项目级配置、0600 凭据库、状态与跨进程锁、脱敏）、`model_http.py`（chat/responses/messages 三线协议、失败分类）、`model_route.py`（清单、能力/额度/健康路由、家族独立性、降级链）与 `selftest_models.py`（136 项离线自测）；GPT 仍只走 `run_gpt.py`、DeepSeek 仍只走 dsh 会话，HTTP 直连这两族需显式 `allowProtectedFamily`；凭据按项目隔离、只读命令不执行取令牌命令；新增 `references/model-access.md`、`assets/providers.registry.json`（MIT，附 NOTICE）与 `assets/models.config.example.json`；任务开始先 `team scan` 经用户同意才入队（`team.json` 存在即开关）；SKILL 增加第 17~20 条硬规则 |
 | 1.6.0 | 2026-10-24 | 去特化：评审单元由"页"改为通用 `units`（文件 / 片段 / diff / 接口 / 单元格 / 页……），`page_map`/`pages_seen`/`title_confirmed` 改为 `units`/`units_seen`/`units_confirmed`；目录工件改用树哈希；DoD、事实包、环境、清理里的文档/排版专用表述移除；schema 强制与零写盘不变 |
