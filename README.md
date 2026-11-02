@@ -3,9 +3,9 @@
 用于 **2 个及以上大模型协作** 的调度与对接：谁负责、怎么交接、评审结论怎么判断可信、出错怎么退。只管协作机制——代码、文档、数据、方案都适用；代码风格、写作、排版这些领域规则属于项目自己的事实包与 DoD，不写进这里。
 
 - 仓库：<https://github.com/zlzyangreal/coordination_of_multiple_large_models>
-- 版本：2.2.0（2026-10-29）
-- 当前离线自测：260 项（mock providers，不联网）
-- 本版把 v2.1 的"流程约定"落成**可执行门禁**：方案评审门（`plan_gate.py`）、评审轮次/分钟预算（`review_budget.py`）、事实包版本与哈希（`facts_pack.py`）、评审测试证据（`test_evidence.py`）、GPT 生产核算与交付门、工作区身份 pin（`session.py`），以及发版一致性脚本（`check_docs.py` + `release.py`）。目标是把"先实现、再让另一个模型挑错"改成"方案先独立评审、评审有预算、结论有证据"。
+- 版本：2.3.0（2026-11-02）
+- 当前离线自测：288 项（mock providers，不联网）
+- 本版加入**自举迭代**：用已发布的稳定版 V(N) 在独立 Git worktree 中驱动候选版 V(N+1)，复用原有方案门、评审预算、事实包、测试证据与发版检查；新增基线对比、用户验收、快照晋升、自动回退和独立回退脚本。目标是把"稳定版编排 → 候选版开发 → 证据化验证 → 人工验收 → 安全晋升 → 可回退继承"变成会拒绝、能演练的脚本链。
 - 上一代：`多模型协作Spec.md` v2.4.1，已冻结，仅作留档
 
 ## 安装
@@ -42,7 +42,7 @@ git push
 ```
 coordination_of_multiple_large_models/
 ├── README.md            本文件（给人看）
-├── SKILL.md             入口：何时用、26 条硬规则、7 步流程（英文，给 Agent 读）
+├── SKILL.md             入口：何时用、30 条硬规则、8 步流程（英文，给 Agent 读）
 ├── references/
 │   ├── environment.md           环境检查、工具链、网络三查/Clash、权限、工作区身份
 │   ├── model-access.md          模型接入：三条车道、凭据、发现/验活、路由、故障与回退、边界
@@ -51,6 +51,7 @@ coordination_of_multiple_large_models/
 │   ├── calling-gpt.md           调用入口、角色、评审调用、可观测性、.ps1 编码、中断收尾
 │   ├── execution-and-gates.md   任务契约、任务板、事实包版本、8 步流程、DoD、回归
 │   ├── handoff-protocol.md      零写盘评审、信封、结果 schema、测试证据、方案评审门、复核门
+│   ├── iteration-bootstrap.md   稳定版→候选版自举：双工作区、基线对比、验收、晋升与回退演练
 │   └── failure-and-artifacts.md 失败矩阵、快照与恢复、清理、上报
 ├── scripts/
 │   ├── check_env.py             一键环境自检（codex 路径/版本、进程、代理、可写、实时额度、pin 身份）
@@ -300,21 +301,80 @@ python scripts/quota.py --note "交稿前"                  # 往 _work/quota_le
 | 工作区身份（C5） | `python scripts/session.py pin` / `check` / `identity` | 路径/盘符/卷序列不符或旧 pin：exit 2，要求重新 pin；**不读另一个盘的同名 `_work`** |
 | GPT 生产与交付（C2） | `python scripts/review_budget.py adopt --request-id R --decision adopted --reason ...`；`deliver` | S/A 无 GPT 生产单元或未采纳/未落审批（5）；B/C/R/U 豁免；`probe` 永不计入 |
 | 发版一致性（C6） | `python scripts/check_docs.py --run-tests`；`python scripts/release.py --version X.Y.Z --note "..."` | 版本/计数/触发词/规则号/旧路径/未登记脚本任一不符；脏树/已存在 tag |
+| 双工作区身份（C7） | `iteration.py init` / `status` / `guard` | 候选与稳定根重叠、非同一仓库 worktree、分支不符、执行端脚本在迭代中被改（exit 3） |
+| 新旧对比（C8） | `iteration.py compare` | 证据不是当前候选 commit、测试失败或少于基线、未声明删除能力、文档不一致（exit 4） |
+| 晋升/回退（C9） | `iteration.py approve` / `release.py`（候选）/ `promote` / `rollback` | 无验收、无对比、tag 不在被测 commit、计划门失败、脏树、晋升后 smoke 失败（自动回退，exit 5） |
 
 一句话：**每个门都是一个退出码，不是一段提醒。** 门禁的共享证据在 `_work/calls/`、`_work/gates/events.jsonl`、`_work/evidence/` 与事实包里。
 
+## 自举迭代（v2.3.0 起）
+
+"用老版本开发新版本"不是一句流程约定，而是一条会拒绝的链：**已发布且验收过的 V(N) 保持为执行端**，
+V(N+1) 在独立 Git worktree 中开发；稳定版负责方案、评审、路由和验收记录，候选版只写自己的根目录；
+通过基线对比与用户验收后才晋升，失败则恢复 V(N)。
+
+```bash
+# 1. 在稳定工作区（干净、HEAD 是已发布 tag）初始化迭代
+python scripts/iteration.py init --candidate ../repo-candidate --stable v2.2.0
+python scripts/session.py pin                  # 状态行从此显示 stable -> candidate 两行
+
+# 2. 记录基线（稳定端，未受候选影响）
+python scripts/iteration.py baseline           # 默认跑 scripts/selftest_models.py
+
+# 3. 候选端开发并提交；生产调用必须 --cd <candidate>
+python scripts/run_gpt.py --cd ../repo-candidate --role produce --work-package WP1 ...
+
+# 4. 候选端发版（只改 SKILL/README，测试在 release commit 上重跑并绑定证据）
+#    在候选工作区内执行：
+python scripts/release.py --version 2.3.0 --note "..." --no-push
+
+# 5. 回到稳定端：在候选 release commit 上重录证据，再对比 + 用户验收
+python scripts/iteration.py evidence           # 稳定端脚本，证据绑定 release commit
+python scripts/iteration.py compare
+python scripts/iteration.py approve --by <用户> --note "验收结论"
+
+# 6. 稳定端晋升或回退
+python scripts/iteration.py promote            # 计划门 + 快照 + ff + smoke；失败自动恢复
+python scripts/iteration.py rollback --yes     # 也可运行生成的独立回退脚本
+```
+
+- **双身份**：`_work/iteration/iteration.json` 记录 stable 的 tag/commit/能力/配置/工具快照，以及
+  candidate 的根、分支和 base commit；候选端只有一份单向的 `candidate.json`。`guard` 按路径判定归属，
+  跨工作区写入直接拒绝。
+- **执行端冻结**：初始化后改动稳定端 `SKILL.md`、脚本或模型配置会让 `status`/`compare` 失败；候选端
+  的修改不会热切换稳定端正在执行的调用。`run_gpt.py --role produce` 在稳定根目录会被拒绝。
+- **证据绑定 commit**：`test_evidence.py` 记录 `git_head`/`git_head_after`、脏标记、工作区根/卷和
+  迭代角色；证据必须由稳定端 `iteration.py evidence` 录制并写入 manifest，`compare` 只接受这条记录，
+  候选自己写的 JSON 不算证据；脏树、跑测试时 HEAD 变化或旧 commit 的证据都会被拒。
+- **对比报告**：`_work/iteration/comparison.json` + `.md` 记录测试数变化、耗时、能力增删、文档门、
+  调用成功率；成本/资源无数据时标 `unknown`。删能力或减少测试必须显式接受并写理由。
+- **决策留痕**：重大分歧用 `iteration.py decide --topic ... --decision ... --by <用户>` 写入
+  `_work/iteration/decisions.jsonl`（含候选 commit 与理由），后续不再重复询问已决定的问题。
+- **晋升**：要求对比通过、`approve` 指向同一 commit 与同一报告哈希、`v<target>` tag 指向该 commit、
+  计划门通过；随后快照代码/配置/pin/计划记录，fast-forward，并在晋升后的稳定树跑 smoke。smoke 失败
+  自动 `reset --hard` 回快照（exit 5）。
+- **回退不依赖候选**：晋升时生成 `_work/iteration/rollback-<id>.py`，只用标准库 + git；即使晋升后的
+  `iteration.py` 已经坏了也能恢复。演练要求至少一次"晋升失败→回退→稳定端测试通过"。
+- **边界**：候选发版默认不 push；晋升默认不 push（`--push` 显式开启）。同一轮只允许一个活跃迭代；
+  需要重新初始化时用 `--force`，不静默改写旧记录。
+
+退出码：`0` 成功；`1` 命令失败；`2` 参数/缺少迭代或证据；`3` 身份/隔离/执行端快照违规；
+`4` 门禁拒绝（计划、证据、对比、验收、tag、脏树）；`5` 晋升/回退 smoke 失败且已恢复旧版。
+
+
 ## 怎么用
 
-1. 开工：`python scripts/session.py pin`（锁契约版本 + 根身份）+ `python scripts/check_env.py --short-call`（确认出口与额度）+ `python scripts/models.py team scan`（把可用 Agent 列给用户，确认后才入队）。
+1. 开工：`python scripts/session.py pin`（锁契约版本 + 根身份）+ `python scripts/check_env.py --short-call`（确认出口与额度）+ `python scripts/models.py team scan`（把可用 Agent 列给用户，确认后才入队）。目标是下一代版本时，先在干净稳定端 `iteration.py init --candidate <独立路径>`。
 2. 每轮：首行 `python scripts/session.py status --stage <阶段>`；变了就跑 `session.py check`，记偏差但不切版本；路径/盘变了则必须 `pin --force` 后重做跳过的门。
 3. 方案设计：`python scripts/models.py route --role plan` 看谁最适合，再 `python scripts/models.py plan --requirements <需求>` 产出 `_work/plan/plan.md`（含 WP 表）；**planner 不负责分任务**。
 4. 方案评审：`build_envelope.py --artifact _work/plan/plan.md ...` + `run_gpt.py --role plan-review --milestone plan ...`，必须换一个家族；结果落到 `plan.review.json` 后跑 `python scripts/plan_gate.py check --envelope ... --result ...`，通过才可分发。同一里程碑最多 2 轮，第 3 轮要 `--why-unclosed`。
-5. 任务分发：lead（dispatcher）根据已评审方案建任务板、定 owner、拆调用；planner 不参与分配。事实包先 `facts_pack.py freeze`，范围/预算变了就 `bump`。
-6. 分工前：`python scripts/quota.py`，照它给的档位决定"谁生产、GPT 做什么、怎么拆调用"；S/A 至少安排一个 GPT 生产单元（`--role produce --work-package WPx --produce-artifact <路径>`）。
+5. 任务分发：lead（dispatcher）根据已评审方案建任务板、定 owner、拆调用；planner 不参与分配。事实包先 `facts_pack.py freeze`，范围/预算变了就 `bump`；迭代中的写操作只落在候选工作区。
+6. 分工前：`python scripts/quota.py`，照它给的档位决定"谁生产、GPT 做什么、怎么拆调用"；S/A 至少安排一个 GPT 生产单元（`--role produce --work-package WPx --produce-artifact <路径> --cd <候选工作区>`）。
 7. 评审前：`python scripts/build_envelope.py --artifact <文件或目录> --out <yaml> --ledger <台账> --unit "api::src/api.py:40-90::handle_request" --test-evidence _work/evidence/tests.json`，第一轮加 `--init-ledger`。
 8. 调用：`python scripts/run_gpt.py --prompt-file <brief> --role review --milestone <M> --request-id <编号> --sandbox read-only --schema assets/result.schema.json --envelope <yaml> --output <payload> --result-path <结果>`；不合 schema、facts 过期或预算超限都会在调用前/后被拒。
 9. 收结论：`python scripts/validate_result.py --result <结果> --envelope <yaml>` 通过后再逐条回源验证；采纳/拒绝写进台账，GPT 生产单元用 `review_budget.py adopt` 落结论；交付前跑 `review_budget.py deliver`。
-10. 结束：`python scripts/check_docs.py --run-tests` + `python scripts/release.py --version <X.Y.Z> --note "..."`（本地可加 `--no-push`）；回报额度用量、调用统计、偏差、未闭环项，并回答"本轮 skill 是否中断"。
+10. 候选交付：候选端 `release.py --version <目标版本> --no-push` 产出 tag 后，回到稳定端重录证据（`iteration.py evidence`），再 `iteration.py compare`；对比通过后由用户验收（`approve --by`），最后 `iteration.py promote`，需要撤销时 `rollback --yes`。
+11. 结束：`python scripts/check_docs.py --run-tests` + `python scripts/release.py --version <X.Y.Z> --note "..."`（本地可加 `--no-push`）；回报额度用量、调用统计、偏差、未闭环项，并回答"本轮 skill 是否中断"。
 
 ## 维护约定
 
@@ -327,6 +387,7 @@ python scripts/quota.py --note "交稿前"                  # 往 _work/quota_le
 
 | 版本 | 日期 | 变更 |
 |---|---|---|
+| 2.3.0 | 2026-11-02 | 自举迭代：稳定版驱动候选版（Git worktree 双工作区）、执行端哈希冻结、双身份 pin、commit 绑定测试证据、基线对比、用户验收、快照晋升与独立回退脚本；新增 `scripts/iteration.py` 与 `references/iteration-bootstrap.md`，`release.py` 支持候选发版，`check_docs.py` 增加 v2.3 结构检查；288 项离线自测 |
 | 2.2.0 | 2026-10-29 | 可执行门禁：方案评审门、评审预算、测试证据、事实包版本、工作区身份、GPT 生产核算与发版检查；设计/实现各 4 轮 GPT 评审后通过；260 项离线自测 |
 | 2.1.0 | 2026-10-27 | 方案设计与任务分发分离：新增 `plan` 角色与 `models.py plan`，按 Reasoning/Design/Agentic/Coding 评分选 planner（可在 `overrides.<model>.scores` 覆盖），先独立评审方案再由 lead 分发；`call --role plan` 拒绝；dsh planner 由会话自己写；155 项离线自测 |
 | 2.0.0 | 2026-10-27 | 大版本：接入 dsh-our-free-model 的多渠道模型能力，并加入任务团队入队审批。多平台模型接入与统一管理：新增 `scripts/models.py`（init/providers/add/key/account/list/discover/test/use/route/chains/call/health/budget/doctor）、`model_registry.py`（内置 76 家提供商注册表 + id 语法）、`model_config.py`（项目级配置、0600 凭据库、状态与跨进程锁、脱敏）、`model_http.py`（chat/responses/messages 三线协议、失败分类）、`model_route.py`（清单、能力/额度/健康路由、家族独立性、降级链）与 `selftest_models.py`（136 项离线自测）；GPT 仍只走 `run_gpt.py`、DeepSeek 仍只走 dsh 会话，HTTP 直连这两族需显式 `allowProtectedFamily`；凭据按项目隔离、只读命令不执行取令牌命令；新增 `references/model-access.md`、`assets/providers.registry.json`（MIT，附 NOTICE）与 `assets/models.config.example.json`；任务开始先 `team scan` 经用户同意才入队（`team.json` 存在即开关）；SKILL 增加第 17~20 条硬规则 |

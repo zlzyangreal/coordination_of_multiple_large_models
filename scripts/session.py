@@ -61,6 +61,12 @@ def cmd_pin(args):
     current = read_contract()
     existing = load_pin()
     if existing and not args.force:
+        summary = common.iteration_summary(os.getcwd())
+        if summary and summary != existing.get("iteration"):
+            existing["iteration"] = summary
+            with open(PIN, "w", encoding="utf-8") as fh:
+                json.dump(existing, fh, ensure_ascii=False, indent=2)
+            print("refreshed the dual identity from _work/iteration/iteration.json")
         print(f"already pinned: v{existing['version']} at {existing['pinned_at']}")
         problems = common.identity_mismatches(existing)
         if problems:
@@ -73,6 +79,9 @@ def cmd_pin(args):
     payload = dict(current)
     payload["pinned_at"] = datetime.now().astimezone().isoformat(timespec="seconds")
     payload["workspace"] = common.workspace_identity(os.getcwd())
+    iteration = common.iteration_summary(os.getcwd())
+    if iteration:
+        payload["iteration"] = iteration
     os.makedirs(os.path.dirname(PIN), exist_ok=True)
     with open(PIN, "w", encoding="utf-8") as fh:
         json.dump(payload, fh, ensure_ascii=False, indent=2)
@@ -80,6 +89,11 @@ def cmd_pin(args):
     print(f"pinned: SKILL v{payload['version']} ({payload['updated']}) mtime {payload['mtime']}")
     print(f"        workspace {workspace['root']} ({workspace['drive']}, "
           f"volume {workspace['volume']})")
+    if iteration:
+        print(f"        stable v{iteration['orchestrator']['version']} @ "
+              f"{str(iteration['orchestrator']['commit'])[:12]} -> candidate "
+              f"v{iteration['target']['version']} @ "
+              f"{str(iteration['target']['commit'] or iteration['target']['base_commit'])[:12]}")
     print(f"        -> {os.path.abspath(PIN)}")
     return 0
 
@@ -102,6 +116,32 @@ def cmd_check(args):
         return 2
     print(f"workspace: {workspace.get('root')} ({workspace.get('drive')}, "
           f"volume {workspace.get('volume')})")
+    iteration = common.iteration_summary(os.getcwd()) or (pin.get("iteration") if pin else None)
+    if iteration:
+        target = iteration.get("target") or {}
+        cand = target.get("root")
+        print(f"orchestrator: stable v{(iteration.get('orchestrator') or {}).get('version')} @ "
+              f"{str((iteration.get('orchestrator') or {}).get('commit'))[:12]}")
+        print(f"target      : candidate v{target.get('version')} @ "
+              f"{str(target.get('commit') or target.get('base_commit'))[:12]} "
+              f"({iteration.get('stage')})")
+        if not cand or not os.path.isdir(cand):
+            print(f"[FAIL] candidate workspace is missing: {cand}")
+            return 2
+        if common.git_common_dir(cand) != common.git_common_dir(os.getcwd()):
+            print("[FAIL] candidate is not a worktree of this repository")
+            return 2
+        if iteration.get("stage") == "development":
+            pin_root = os.path.normcase(os.path.abspath(
+                (pin.get("workspace") or {}).get("root") or "."))
+            stable_root = os.path.normcase(os.path.abspath(
+                (iteration.get("orchestrator") or {}).get("root") or "."))
+            if pin_root == stable_root:
+                current_head = common.git_output(os.getcwd(), "rev-parse", "HEAD")
+                pinned_head = (iteration.get("orchestrator") or {}).get("commit")
+                if current_head and pinned_head and current_head != pinned_head:
+                    print("[FAIL] stable HEAD moved during development; no mid-iteration switch")
+                    return 2
     pinned_skill = os.path.normcase(os.path.abspath(pin.get("skill_path") or ""))
     current_skill = os.path.normcase(os.path.abspath(SKILL))
     if pinned_skill and pinned_skill != current_skill:
@@ -149,6 +189,16 @@ def cmd_status(args):
         except Exception:  # noqa: BLE001
             quota_text = "quota unreadable"
     print(f"SKILL v{version} ({label}) | {quota_text} | 阶段：{stage}")
+    iteration = common.iteration_summary(os.getcwd()) or ((pin or {}).get("iteration"))
+    if iteration:
+        target = iteration.get("target") or {}
+        cand_head = common.git_output(target.get("root") or ".", "rev-parse", "HEAD") \
+            if target.get("root") else None
+        print(f"iteration: stable v{(iteration.get('orchestrator') or {}).get('version')} @ "
+              f"{str((iteration.get('orchestrator') or {}).get('commit'))[:12]} -> "
+              f"candidate v{target.get('version')} @ "
+              f"{str(cand_head or target.get('base_commit'))[:12]} "
+              f"({iteration.get('stage')})")
     return 0
 
 

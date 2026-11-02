@@ -242,6 +242,20 @@ def collect_issues(root=".", test_count=None):
                 issues.append(_issue("script-doc", f"{label} references missing script(s): "
                                                    f"{', '.join(absent)}", target))
 
+    version_parts = []
+    for part in (version or "0.0.0").split(".")[:3]:
+        match = re.match(r"(\d+)", part)
+        version_parts.append(int(match.group(1)) if match else 0)
+    version_parts = tuple(version_parts + [0] * (3 - len(version_parts)))
+    if version_parts >= (2, 3, 0):
+        for rel in (os.path.join("scripts", "iteration.py"),
+                    os.path.join("references", "iteration-bootstrap.md")):
+            if not os.path.isfile(os.path.join(root, rel)):
+                issues.append(_issue("iteration", f"v{version} requires {rel}", root))
+        if "iteration.py" not in _script_mentions(skill):
+            issues.append(_issue("iteration", "SKILL.md does not document scripts/iteration.py",
+                                 skill_path))
+
     assets = set()
     for path in _md_files(root):
         assets |= set(re.findall(r"assets/([A-Za-z0-9_.-]+\.(?:json|md|ya?ml))", _read(path)))

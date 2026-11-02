@@ -178,6 +178,85 @@ def identity_mismatches(pin, root="."):
     return problems
 
 
+# --------------------------------------------------------------------------- iteration identity
+ITERATION = os.path.join("_work", "iteration")
+ITERATION_MANIFEST = os.path.join(ITERATION, "iteration.json")
+CANDIDATE_RECORD = os.path.join(ITERATION, "candidate.json")
+
+
+def git_output(root, *args):
+    """stdout of a git command, or None when git is unavailable or the command fails."""
+    try:
+        done = subprocess.run(["git", "-C", root] + list(args), capture_output=True, text=True,
+                              encoding="utf-8", errors="replace", timeout=15)
+    except Exception:  # noqa: BLE001
+        return None
+    return done.stdout.strip() if done.returncode == 0 else None
+
+
+def git_common_dir(root):
+    """Absolute common git directory; equal for the main worktree and its linked worktrees."""
+    out = git_output(root, "rev-parse", "--path-format=absolute", "--git-common-dir")
+    if not out:
+        out = git_output(root, "rev-parse", "--git-common-dir")
+    if not out:
+        return None
+    return os.path.normcase(os.path.abspath(os.path.join(root, out)
+                                            if not os.path.isabs(out) else out))
+
+
+def iteration_manifest(project="."):
+    data = read_json(os.path.join(project, ITERATION_MANIFEST))
+    return data if isinstance(data, dict) else None
+
+
+def candidate_record(project="."):
+    data = read_json(os.path.join(project, CANDIDATE_RECORD))
+    return data if isinstance(data, dict) else None
+
+
+def iteration_summary(project="."):
+    """Compact stable/target identity for pins, call records and envelopes."""
+    manifest = iteration_manifest(project)
+    if not manifest:
+        record = candidate_record(project)
+        if isinstance(record, dict) and record.get("stable_root"):
+            manifest = iteration_manifest(record["stable_root"])
+    if not manifest:
+        return None
+    orch = manifest.get("orchestrator") or {}
+    target = manifest.get("target") or {}
+    return {
+        "id": manifest.get("iteration_id"),
+        "stage": manifest.get("stage"),
+        "orchestrator": {"version": orch.get("version"), "tag": orch.get("tag"),
+                         "commit": orch.get("commit"), "root": orch.get("root")},
+        "target": {"version": target.get("version"), "branch": target.get("branch"),
+                   "commit": git_output(os.path.abspath(target.get("root") or "."), "rev-parse",
+                                        "HEAD") if target.get("root") else None,
+                   "base_commit": target.get("base_commit"), "root": target.get("root")},
+    }
+
+
+def iteration_binding(project=".", cwd=None):
+    """Where this call belongs: stable orchestrator, candidate target, or neither."""
+    summary = iteration_summary(project)
+    if not summary:
+        return None
+    cwd = os.path.abspath(cwd or project)
+    root = os.path.abspath((summary.get("orchestrator") or {}).get("root") or project)
+    target = os.path.abspath((summary.get("target") or {}).get("root") or "")
+    role = "other"
+    if target and (norm_path(cwd) == norm_path(target)
+                   or norm_path(cwd).startswith(norm_path(target) + os.sep)):
+        role = "candidate"
+    elif norm_path(cwd) == norm_path(root) or norm_path(cwd).startswith(norm_path(root) + os.sep):
+        role = "stable"
+    summary["cwd_role"] = role
+    summary["cwd"] = cwd
+    return summary
+
+
 # --------------------------------------------------------------------------- call evidence
 def _normalise(record):
     """One shape for runner records, HTTP JSONL rows and pending markers."""

@@ -1,9 +1,9 @@
 ---
 name: coordination_of_multiple_large_models
-description: Orchestrate two or more LLMs on one deliverable, across code, documents and data — capability check, model verification, quota-tiered routing, per-project multi-provider access (free/keyless, API key, custom base URL, local server, account-token import), task contract, request/result envelopes, zero-write review calls, schema-enforced review gate, plan-review gate, review-call budget, test evidence in the envelope, delivery gate, release/documentation checks, failure handling. Use for multi-model routing, adding or switching model providers, GPT/Codex reviews, plan-first production, subagent handoffs, adopting review findings, model outages or proxy issues, workspace migration, releases, and collaboration postmortems. 触发词：多模型协作、模型分工、模型路由、模型接入、模型团队、入队审批、方案设计、架构设计、技术选型、计划与分发分离、模型切换、免费模型、API Key、自定义 API 地址、Ollama、本地模型、额度分档、GPT 额度利用率、GPT 评审、codex 评审、子代理协作、评审结论采纳、模型卡顿、codex 超时、代理问题、协作复盘、方案评审门、评审轮次预算、测试证据、工作区身份、发版一致性检查。
+description: Orchestrate two or more LLMs on one deliverable, across code, documents and data — capability check, model verification, quota-tiered routing, per-project multi-provider access (free/keyless, API key, custom base URL, local server, account-token import), task contract, request/result envelopes, zero-write review calls, schema-enforced review gate, plan-review gate, review-call budget, test evidence in the envelope, delivery gate, release/documentation checks, failure handling, stable-version-drives-candidate self-bootstrap with dual workspaces, baseline comparison and gated promotion/rollback. Use for multi-model routing, adding or switching model providers, GPT/Codex reviews, plan-first production, subagent handoffs, adopting review findings, model outages or proxy issues, workspace migration, releases, self-bootstrap iteration, promotion or rollback, and collaboration postmortems. 触发词：多模型协作、模型分工、模型路由、模型接入、模型团队、入队审批、方案设计、架构设计、技术选型、计划与分发分离、模型切换、免费模型、API Key、自定义 API 地址、Ollama、本地模型、额度分档、GPT 额度利用率、GPT 评审、codex 评审、子代理协作、评审结论采纳、模型卡顿、codex 超时、代理问题、协作复盘、方案评审门、评审轮次预算、测试证据、工作区身份、发版一致性检查、自举迭代、稳定版、候选版、双工作区、版本晋升、回退演练。
 metadata:
-  version: 2.2.0
-  updated: 2026-10-29
+  version: 2.3.0
+  updated: 2026-11-02
 allowed-tools: Read, Write, Edit, Bash
 ---
 
@@ -48,27 +48,34 @@ Skip for single-model, single-file, one-shot work — but still run `scripts/che
 24. **A reviewer must see behaviour.** The lead records tests with `scripts/test_evidence.py record -- <command>`; `build_envelope.py --test-evidence` embeds the record and adds each log as a review unit. When evidence exists, `validate_result.py` requires `test_refs` with the log hash and a verbatim excerpt that is present in the log but absent from the envelope summary. A review with no evidence is static-only and must say so.
 25. **GPT produces at S/A.** A produce unit names a work package from the reviewed plan's work-package table, produces an artifact whose path matches that row's `output` and whose hash is recorded, and has an adoption event. `review_budget.py deliver` blocks an S/A delivery with no such unit unless a stored user approval is recorded; B/C/R/U are exempt; `probe` never counts.
 26. **Facts are versioned.** The facts pack carries `facts_version`, `facts_hash`, `frozen_at`. `facts_pack.py freeze|bump|check` is the only writer; a stale or unversioned pack cannot build an envelope; the runner rehashes before launch and the validator after; the result echoes `facts_version`. Any scope or budget change bumps the version and appends a version-log row.
+27. **Stable drives candidate.** The released tag V(N) is the execution end; V(N+1) is developed in an independent git worktree created by `iteration.py init`. Never grow the next version by editing the stable tree in place, and never let a candidate release decide by itself that it is stable. One iteration has one manifest (`_work/iteration/iteration.json`) recording the stable tag/commit, capability list, config and tool snapshot.
+28. **Two identities, two roots.** `session.py pin` records the orchestrator (`stable`) and the target (`candidate`) roots/commits; envelopes, evidence and call records name their workspace and commit. Candidate writes only its own root; stable `_work` is read-only to it. Overlap, wrong branch, stale identity or a candidate path that is not a worktree of the same repository stops the work (exit 3) — never repair silently.
+29. **Freeze the executor.** Stable `SKILL.md`, scripts and model config are hashed at init. Changing them mid-iteration blocks `iteration.py status`/`compare`; no hot switch. Candidate edits are expected and do not touch the running stable executor. Production calls during an iteration run with `--cd <candidate>`; `run_gpt.py` refuses a produce call in the stable root.
+30. **Promotion is a gate, not a version edit.** `iteration.py compare` requires candidate tests ≥ baseline with zero failures, consistent docs, and declared capability removals; `approve --by <user>` records the user's acceptance of that exact commit; the release tag must point at it; `promote` re-runs the plan gate, snapshots code/config/pins, fast-forwards and smoke-tests, and auto-restores V(N) if smoke fails. `rollback` (or the generated standalone shim under `_work/iteration/`) restores the snapshot without depending on the failed candidate. Every drill and every override is recorded in `_work/gates/events.jsonl`.
 
 ## Workflow
 
 | # | Step | Gate | Read |
 |---|---|---|---|
-| 0 | Pin identity, environment, quota, team scan + approval | no pin / identity mismatch / no green / no team decision, no routing | [references/environment.md](references/environment.md) → [references/model-access.md](references/model-access.md) |
+| 0 | Pin identity, environment, quota, team scan + approval; for a next-version goal also `iteration.py init` (stable tag → candidate worktree) | no pin / identity mismatch / no green / no team decision / overlapping roots, no routing | [references/environment.md](references/environment.md) → [references/model-access.md](references/model-access.md) → [references/iteration-bootstrap.md](references/iteration-bootstrap.md) |
 | 1 | Verify models, read quota, route | an unverified HTTP model is not a review default | [references/model-registry.md](references/model-registry.md) → [references/model-access.md](references/model-access.md) → [references/quota-routing.md](references/quota-routing.md) |
 | 2 | Plan: requirement → research → architecture → stack → WP table; independent plan review; `plan_gate.py check` | no schema-valid plan review (different family), no dispatch | [references/model-access.md](references/model-access.md#planner-vs-dispatcher-planner-role) → [references/execution-and-gates.md](references/execution-and-gates.md) |
-| 3 | Dispatch: task contract, board, facts pack frozen + versioned, review budget | facts stale or no budget, no work | [references/execution-and-gates.md](references/execution-and-gates.md) |
+| 3 | Dispatch: task contract, board, facts pack frozen + versioned, review budget; candidate worktree is the only write target | facts stale or no budget, no work | [references/execution-and-gates.md](references/execution-and-gates.md) |
 | 4 | Produce + independent review: roles, envelopes, test evidence | producer never self-reviews; no evidence = static-only | [references/calling-gpt.md](references/calling-gpt.md) → [references/handoff-protocol.md](references/handoff-protocol.md) |
 | 5 | Review gate: validate (facts + `test_refs`) → verify at source → decide → event log → `deliver` | no valid result/evidence/delivery gate, no delivery | [references/handoff-protocol.md](references/handoff-protocol.md) |
+| 5b | Compare with the baseline, accept, promote or roll back | tests < baseline, failures, undeclared capability removal, no approval, tag not on the tested commit, smoke failed | [references/iteration-bootstrap.md](references/iteration-bootstrap.md) |
 | 6 | Release: `check_docs.py --run-tests` → `release.py`; postmortem; artifact cleanup | no checks/postmortem, not done | [references/failure-and-artifacts.md](references/failure-and-artifacts.md) |
 
 ## Session
 
 ```
-SKILL v2.2.0 (pinned 22:54, D:) | quota 5h 78% / week 96% | 阶段：评审
+SKILL v2.3.0 (pinned 22:54, D:) | quota 5h 78% / week 96% | 阶段：评审
+iteration: stable v2.2.0 @6dae3ed -> candidate v2.3.0 @12e3457 (development)
 ```
 
 - First turn: `python scripts/session.py pin`. Every turn after: `python scripts/session.py status --stage <stage>`.
-- Self-check each turn: gate run? runner role? quota read? Answer in the status line or the event log, not from memory.
+- When the goal is V(N+1), `iteration.py init --candidate ../<repo>-candidate` runs before dispatch; the second status line names both roles. Candidate gates run with the stable scripts as the trusted copy.
+- Self-check each turn: gate run? runner role? quota read? workspace role? Answer in the status line or the event log, not from memory.
 - A mid-session repo update does not change behaviour: continue on the pin, record one deviation line, and mention it at delivery.
 - A path/disk change is not a deviation to log: it blocks until `session.py pin --force`, then redo the skipped gate.
 
@@ -77,7 +84,8 @@ SKILL v2.2.0 (pinned 22:54, D:) | quota 5h 78% / week 96% | 阶段：评审
 | Command | Purpose |
 |---|---|
 | `python scripts/check_env.py --short-call` | Resolve Codex, version, processes, proxy, reachability, writability, live quota, pin identity |
-| `python scripts/session.py pin\|check\|status\|identity\|note` | Contract + root identity pin, drift, status line, round notes |
+| `python scripts/session.py pin\|check\|status\|identity\|note` | Contract + root identity pin, drift, status line, round notes; with an iteration it pins both roles |
+| `python scripts/iteration.py init\|status\|guard\|baseline\|evidence\|compare\|decide\|approve\|promote\|rollback` | Stable V(N) → isolated candidate V(N+1), commit-bound evidence, baseline diff, decision log, user approval, gated promotion and independent rollback |
 | `python scripts/run_gpt.py --prompt-file <f> --cd <dir> --role produce\|review\|plan-review\|probe` | **The** GPT call path: persistent, role-aware, records thread/rollout/quota, gates, `--schema` + `--result-path` + `--envelope` for reviews |
 | `python scripts/plan_gate.py check\|status` | Plan review gate: hash/mtime, envelope, result, call record, family |
 | `python scripts/review_budget.py check\|raise\|note-minutes\|adopt\|waive\|report\|deliver` | Review-call/minute budget, production adoption, tier-conditioned delivery gate |

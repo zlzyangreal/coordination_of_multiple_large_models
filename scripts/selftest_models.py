@@ -239,6 +239,7 @@ def main():
         team_cases(env, work, port_a, port_b)
         plan_cases(env, work, port_a, port_b)
         gate_cases(env, work, port_a, port_b)
+        iteration_cases(env, work)
     finally:
         for server in (server_a, server_b, server_c):
             server.shutdown()
@@ -2217,6 +2218,365 @@ def gate_cases(env, work, port_a, port_b):
     check("release: a tag-push failure keeps the local tag", code == 1
           and remote_tag == "" and local_tag == "v1.6.0"
           and "Recover with: git push origin v1.6.0" in (out + err), out + err)
+
+
+def iteration_cases(env, work):
+    """v2.3.0 self-bootstrap: dual worktrees, commit-bound evidence, comparison, promotion, rollback."""
+    import shutil
+
+    def script(project, name, args, extra_env=None):
+        local = os.path.join(project, "scripts", name)
+        path = local if os.path.isfile(local) else os.path.join(SKILL, "scripts", name)
+        done = subprocess.run([sys.executable, path] + args,
+                              cwd=project, capture_output=True, text=True, encoding="utf-8",
+                              errors="replace", env=extra_env or env)
+        return done.returncode, done.stdout or "", done.stderr or ""
+
+    def read(path):
+        with open(path, encoding="utf-8-sig") as fh:
+            return fh.read()
+
+    def write(path, text):
+        os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+        with open(path, "w", encoding="utf-8", newline="\n") as fh:
+            fh.write(text)
+
+    def write_json(path, data):
+        write(path, json.dumps(data, ensure_ascii=False, indent=2) + "\n")
+
+    def sha(path):
+        return hashlib.sha256(open(path, "rb").read()).hexdigest()
+
+    def head(project):
+        return subprocess.run(["git", "-C", project, "rev-parse", "HEAD"],
+                              capture_output=True, text=True).stdout.strip()
+
+    def git(project, *args):
+        return subprocess.run(["git", "-C", project] + list(args), capture_output=True,
+                              text=True, encoding="utf-8", errors="replace")
+
+    def smoke(ok):
+        code = "print('261 passed, 0 failed')" if ok else "import sys; sys.exit(9)"
+        return f'"{sys.executable}" -c "{code}"'
+
+    def make_fixture(name):
+        base = os.path.join(work, name)
+        stable = os.path.join(base, "stable")
+        cand = os.path.join(base, "candidate")
+        os.makedirs(stable)
+        for doc in ("SKILL.md", "README.md", ".gitignore"):
+            shutil.copy2(os.path.join(SKILL, doc), os.path.join(stable, doc))
+        for folder in ("scripts", "references", "assets"):
+            shutil.copytree(os.path.join(SKILL, folder), os.path.join(stable, folder),
+                            ignore=shutil.ignore_patterns("__pycache__"))
+        skill = read(os.path.join(stable, "SKILL.md"))
+        skill = re.sub(r"^(\s*version:\s*)\S+", r"\g<1>2.2.0", skill, count=1, flags=re.M)
+        skill = re.sub(r"^(\s*updated:\s*)\S+", r"\g<1>2026-10-29", skill, count=1, flags=re.M)
+        write(os.path.join(stable, "SKILL.md"), skill)
+        readme = read(os.path.join(stable, "README.md"))
+        readme = re.sub(r"^- 版本：.*$", "- 版本：2.2.0（2026-10-29）", readme, count=1, flags=re.M)
+        readme = re.sub(r"^- 当前离线自测：.*$",
+                        "- 当前离线自测：260 项（mock providers，不联网）",
+                        readme, count=1, flags=re.M)
+        readme = re.sub(r"^\| 2\.3\.0 \|.*\n", "", readme, flags=re.M)
+        write(os.path.join(stable, "README.md"), readme)
+        git(stable, "init", "-q")
+        git(stable, "config", "user.email", "selftest@example.com")
+        git(stable, "config", "user.name", "selftest")
+        git(stable, "add", "-A")
+        git(stable, "commit", "-qm", "stable v2.2.0")
+        git(stable, "tag", "v2.2.0")
+        return stable, cand
+
+    def seed_plan(stable):
+        write(os.path.join(stable, "_work", "facts_pack.md"),
+              "# Facts\n\n## budgets\n\n| budget | value |\n|---|---|\n"
+              "| review_calls | 2 per milestone |\n| review_minutes | 30 min |\n")
+        write(os.path.join(stable, "_work", "plan", "plan.md"),
+              "# Plan\n\n## Work packages\n\n| id | output | DoD |\n|---|---|---|\n"
+              "| WP1 | scripts/feature.py | works |\n")
+        write(os.path.join(stable, "_work", "plan", "review_ledger.md"),
+              "# review ledger\n\n| id | round | where | status | reason | owner |"
+              " budget_change |\n|---|---|---|---|---|---|---|\n")
+        code, out, err = script(stable, "facts_pack.py", ["freeze"])
+        code, out, err = script(stable, "build_envelope.py", [
+            "--artifact", "_work/plan/plan.md", "--out", "_work/plan/env_plan.yaml",
+            "--ledger", "_work/plan/review_ledger.md",
+            "--unit", "plan::_work/plan/plan.md::WP1"])
+        if code != 0:
+            return code, out, err
+        values = {}
+        for line in read(os.path.join(stable, "_work/plan/env_plan.yaml")).splitlines():
+            match = re.match(r"^([A-Za-z_]+):\s*(.*)$", line)
+            if match:
+                values[match.group(1)] = match.group(2).strip().strip('"')
+        result = {
+            "request_id": values["request_id"], "artifact_hash": values["version_hash"],
+            "artifact_mtime": values["artifact_mtime"], "units_seen": ["plan"],
+            "units_confirmed": [{"unit": "plan", "observed": "WP1"}], "findings": [],
+            "confidence": "high", "limitations": [],
+            "facts_version": values.get("facts_version", ""),
+        }
+        result_path = os.path.join(stable, "_work/plan/plan.review.json")
+        write_json(result_path, result)
+        call = {
+            "request_id": values["request_id"], "status": "ok", "ephemeral": False,
+            "schema_valid": True, "model": "codex:gpt-5.1", "protocol_version": 2,
+            "role": "plan-review", "contract": {"pinned": "2.3.0"},
+            "envelope_path": os.path.abspath(
+                os.path.join(stable, "_work/plan/env_plan.yaml")),
+            "envelope_sha256": sha(os.path.join(stable, "_work/plan/env_plan.yaml")),
+            "result_path": os.path.abspath(result_path), "result_sha256": sha(result_path),
+            "artifact": os.path.abspath(os.path.join(stable, "_work/plan/plan.md")),
+            "artifact_sha256": values["version_hash"],
+        }
+        write_json(os.path.join(stable, "_work", "calls",
+                                values["request_id"] + ".json"), call)
+        return script(stable, "plan_gate.py", [
+            "check", "--envelope", "_work/plan/env_plan.yaml",
+            "--result", "_work/plan/plan.review.json"])
+
+    def prepare_candidate(cand, count=261):
+        skill_path = os.path.join(cand, "SKILL.md")
+        skill = read(skill_path)
+        skill = re.sub(r"^(\s*version:\s*)\S+", r"\g<1>2.3.0", skill, count=1, flags=re.M)
+        skill = re.sub(r"^(\s*updated:\s*)\S+", r"\g<1>2026-11-02", skill, count=1, flags=re.M)
+        if "feature.py" not in skill:
+            skill += "\nCandidate feature: `scripts/feature.py`.\n"
+        write(skill_path, skill)
+        readme_path = os.path.join(cand, "README.md")
+        readme = read(readme_path)
+        readme = re.sub(r"^- 版本：.*$", "- 版本：2.3.0（2026-11-02）", readme, count=1,
+                        flags=re.M)
+        readme = re.sub(r"^- 当前离线自测：.*$",
+                        f"- 当前离线自测：{count} 项（mock providers，不联网）",
+                        readme, count=1, flags=re.M)
+        row = (f"| 2.3.0 | 2026-11-02 | 自举迭代候选；{count} 项离线自测 |")
+        if "| 2.3.0 |" in readme:
+            readme = re.sub(r"^\| 2\.3\.0 \|.*$", row, readme, count=1, flags=re.M)
+        else:
+            head_row = "## 更新日志\n\n| 版本 | 日期 | 变更 |\n|---|---|---|\n"
+            readme = readme.replace(head_row, head_row + row + "\n", 1)
+        if "feature.py" not in readme:
+            readme += "\n候选版新增 `scripts/feature.py`。\n"
+        write(readme_path, readme)
+        write(os.path.join(cand, "scripts", "feature.py"),
+              '"""Candidate feature."""\n\ndef value():\n    return 1\n')
+        git(cand, "add", "-A")
+        git(cand, "commit", "-qm", "candidate v2.3.0")
+        return head(cand)
+
+    # ------------------------------------------------------------ main flow
+    stable, cand = make_fixture("iteration-main")
+    code, out, err = seed_plan(stable)
+    check("iteration: plan gate fixture passes", code == 0, out + err)
+    stable_head = head(stable)
+    code, out, err = script(stable, "iteration.py",
+                            ["init", "--candidate", cand, "--stable", "v2.2.0"])
+    manifest_path = os.path.join(stable, "_work", "iteration", "iteration.json")
+    candidate_id = os.path.join(cand, "_work", "iteration", "candidate.json")
+    manifest = json.loads(read(manifest_path)) if os.path.isfile(manifest_path) else {}
+    check("iteration: init creates the manifest, worktree and candidate identity",
+          code == 0 and os.path.isfile(candidate_id)
+          and manifest.get("orchestrator", {}).get("version") == "2.2.0"
+          and manifest.get("target", {}).get("version") == "2.3.0"
+          and os.path.isfile(os.path.join(cand, "SKILL.md")), out + err)
+    state = json.loads(read(os.path.join(stable, "_work", "iteration", "state.json")))
+    check("iteration: init pins the stable executor as the default",
+          state.get("default_executor", {}).get("version") == "2.2.0", str(state))
+    code, out, err = script(stable, "iteration.py", ["status"])
+    check("iteration: status names both roles and finds no drift",
+          code == 0 and "stable" in out and "candidate" in out and "identity" in out, out + err)
+    code, out, err = script(cand, "iteration.py", ["status"])
+    check("iteration: gates refuse to run from the candidate's copy",
+          code == 2 and "stable workspace" in out + err, out + err)
+    code, out, err = script(stable, "session.py", ["pin"])
+    code2, out2, err2 = script(stable, "session.py", ["status", "--stage", "开发"])
+    check("iteration: session status prints the dual identity",
+          code == 0 and code2 == 0 and "stable v2.2.0" in out2
+          and "candidate v2.3.0" in out2, out + out2 + err + err2)
+    code, out, err = script(stable, "iteration.py",
+                            ["guard", "--path", os.path.join(cand, "scripts", "x.py"),
+                             "--expect", "candidate"])
+    code2, out2, err2 = script(stable, "iteration.py",
+                               ["guard", "--path", os.path.join(stable, "scripts", "x.py"),
+                                "--expect", "candidate"])
+    check("iteration: guard assigns each path to exactly one workspace",
+          code == 0 and code2 == 4, out + out2 + err + err2)
+    code, out, err = script(stable, "iteration.py", [
+        "decide", "--topic", "candidate layout", "--option", "A: one file",
+        "--option", "B: package", "--decision", "B", "--reason", "testable",
+        "--by", "user"])
+    decisions = os.path.join(stable, "_work", "iteration", "decisions.jsonl")
+    check("iteration: a major decision is recorded with its commit",
+          code == 0 and os.path.isfile(decisions) and "candidate layout" in read(decisions),
+          out + err)
+    code, out, err = script(stable, "iteration.py",
+                            ["init", "--candidate", cand, "--stable", "v2.2.0"])
+    check("iteration: a second init is refused", code == 2, out + err)
+    code, out, err = script(stable, "iteration.py", [
+        "baseline", "--", sys.executable, "-c", "print('260 passed, 0 failed')"])
+    baseline = json.loads(read(os.path.join(stable, "_work", "iteration", "baseline.json"))) \
+        if code == 0 else {}
+    check("iteration: baseline records the stable test count",
+          code == 0 and baseline.get("tests", {}).get("passed") == 260, out + err)
+
+    write(os.path.join(stable, "scripts", "hot_swap.py"), "VALUE = 1\n")
+    code, out, err = script(stable, "iteration.py", ["status"])
+    check("iteration: a changed stable executor blocks status", code == 3, out + err)
+    os.remove(os.path.join(stable, "scripts", "hot_swap.py"))
+    code, out, err = script(stable, "iteration.py", ["status"])
+    check("iteration: removing the stray file clears the block", code == 0, out + err)
+
+    candidate_core = os.path.join(cand, "scripts", "session.py")
+    original_core = read(candidate_core)
+    write(candidate_core, "raise RuntimeError('candidate core is broken')\n")
+    code, out, err = script(stable, "iteration.py", ["status"])
+    code2, out2, err2 = script(stable, "session.py", ["status", "--stage", "开发"])
+    git(cand, "checkout", "--", "scripts/session.py")
+    check("iteration: a broken candidate core does not affect the stable executor",
+          code == 0 and code2 == 0 and read(candidate_core) == original_core,
+          out + out2 + err + err2)
+
+    cand_head = prepare_candidate(cand)
+    code, out, err = script(stable, "iteration.py", ["evidence", "--", sys.executable,
+                                                     "-c", "print('261 passed, 0 failed')"])
+    record_path = os.path.join(cand, "_work", "evidence", "iteration-candidate.json")
+    record = json.loads(read(record_path)) if os.path.isfile(record_path) else {}
+    check("iteration: evidence binds the exact candidate commit",
+          code == 0 and record.get("git_head") == cand_head
+          and record.get("tests_passed") == 261, out + err + str(record))
+    code, out, err = script(stable, "iteration.py", ["compare"])
+    report_path = os.path.join(stable, "_work", "iteration", "comparison.json")
+    report = json.loads(read(report_path)) if os.path.isfile(report_path) else {}
+    check("iteration: comparison passes with one more test",
+          code == 0 and report.get("verdict") == "pass"
+          and report.get("tests", {}).get("delta") == 1
+          and "feature.py" in report.get("capabilities", {}).get("added", []), out + err)
+    code, out, err = script(stable, "iteration.py", [
+        "promote", "--smoke-command", smoke(True)])
+    check("iteration: promotion needs the user's approval", code == 4, out + err)
+    code, out, err = script(stable, "iteration.py",
+                            ["approve", "--by", "user", "--note", "accepted"])
+    check("iteration: approval records the compared commit",
+          code == 0 and os.path.isfile(os.path.join(stable, "_work", "iteration",
+                                                    "approval.json")), out + err)
+    with open(os.path.join(cand, "_work", "evidence", "iteration-candidate.json"), "a",
+              encoding="utf-8") as fh:
+        fh.write("\n")
+    code, out, err = script(stable, "iteration.py", [
+        "promote", "--smoke-command", smoke(True)])
+    check("iteration: changed trusted evidence blocks promotion", code == 4, out + err)
+    script(stable, "iteration.py", ["evidence", "--", sys.executable,
+                                     "-c", "print('261 passed, 0 failed')"])
+    code, out, err = script(stable, "iteration.py", [
+        "promote", "--smoke-command", smoke(True)])
+    check("iteration: promotion needs the release tag", code == 4 and "tag" in out + err,
+          out + err)
+    git(cand, "tag", "-f", "v2.3.0")
+    code, out, err = script(stable, "iteration.py", [
+        "promote", "--smoke-command", smoke(False)])
+    restored = head(stable)
+    state = json.loads(read(os.path.join(stable, "_work", "iteration", "state.json")))
+    manifest = json.loads(read(manifest_path))
+    check("iteration: a failed promotion smoke restores the stable commit",
+          code == 5 and restored == stable_head
+          and state.get("default_executor", {}).get("version") == "2.2.0"
+          and manifest.get("stage") == "rolled_back", out + err)
+    code, out, err = script(stable, "iteration.py", [
+        "promote", "--smoke-command", smoke(True)])
+    state = json.loads(read(os.path.join(stable, "_work", "iteration", "state.json")))
+    shims = [name for name in os.listdir(os.path.join(stable, "_work", "iteration"))
+             if name.startswith("rollback-") and name.endswith(".py")]
+    manifest = json.loads(read(manifest_path))
+    check("iteration: a passing promotion fast-forwards and switches the default executor",
+          code == 0 and head(stable) == cand_head
+          and state.get("default_executor", {}).get("version") == "2.3.0"
+          and manifest.get("orchestrator", {}).get("version") == "2.3.0" and shims,
+          out + err)
+    code, out, err = script(stable, "iteration.py",
+                            ["rollback", "--yes", "--smoke-command", smoke(True)])
+    state = json.loads(read(os.path.join(stable, "_work", "iteration", "state.json")))
+    check("iteration: rollback restores the old commit and executor",
+          code == 0 and head(stable) == stable_head
+          and state.get("default_executor", {}).get("version") == "2.2.0", out + err)
+
+    # Promote again, break the promoted controller, and prove the generated shim still rolls back.
+    code, out, err = script(stable, "iteration.py", [
+        "promote", "--smoke-command", smoke(True)])
+    shims = [name for name in os.listdir(os.path.join(stable, "_work", "iteration"))
+             if name.startswith("rollback-") and name.endswith(".py")]
+    write(os.path.join(stable, "scripts", "iteration.py"),
+          "raise RuntimeError('promoted controller is broken')\n")
+    git(stable, "add", "scripts/iteration.py")
+    git(stable, "commit", "-qm", "break controller on purpose")
+    shim_code = subprocess.run([sys.executable,
+                                os.path.join(stable, "_work", "iteration", shims[0]), "--yes"],
+                               capture_output=True, text=True, encoding="utf-8",
+                               errors="replace")
+    state = json.loads(read(os.path.join(stable, "_work", "iteration", "state.json")))
+    controller = read(os.path.join(stable, "scripts", "iteration.py"))
+    check("iteration: the standalone shim rolls back without importing the promoted code",
+          code == 0 and shim_code.returncode == 0 and head(stable) == stable_head
+          and state.get("default_executor", {}).get("version") == "2.2.0"
+          and "promoted controller is broken" not in controller,
+          out + (shim_code.stdout or "") + (shim_code.stderr or ""))
+
+    # ------------------------------------------------------------ blocked comparisons
+    stable2, cand2 = make_fixture("iteration-block")
+    seed_plan(stable2)
+    script(stable2, "iteration.py", ["init", "--candidate", cand2, "--stable", "v2.2.0"])
+    script(stable2, "iteration.py", [
+        "baseline", "--", sys.executable, "-c", "print('260 passed, 0 failed')"])
+    prepare_candidate(cand2, count=259)
+    script(stable2, "iteration.py", [
+        "evidence", "--", sys.executable, "-c", "print('259 passed, 0 failed')"])
+    code, out, err = script(stable2, "iteration.py", ["compare"])
+    check("iteration: fewer tests than baseline block the comparison",
+          code == 4 and "test count regressed" in out + err, out + err)
+    code, out, err = script(stable2, "iteration.py", [
+        "compare", "--accept-fewer-tests", "259", "--reason", "redundant cases removed"])
+    check("iteration: an explicit, reasoned test-count drop is accepted",
+          code == 0 and "accepted" in out + err, out + err)
+    append = os.path.join(cand2, "scripts", "feature.py")
+    with open(append, "a", encoding="utf-8") as fh:
+        fh.write("\n# drift\n")
+    git(cand2, "add", "-A")
+    git(cand2, "commit", "-qm", "candidate drift")
+    code, out, err = script(stable2, "iteration.py", ["compare"])
+    check("iteration: evidence for an older commit is stale", code == 4 and "evidence names" in
+          out + err, out + err)
+    script(stable2, "iteration.py", [
+        "evidence", "--", sys.executable, "-c", "print('259 passed, 0 failed')"])
+    os.remove(os.path.join(cand2, "scripts", "reap_turns.py"))
+    for doc in ("SKILL.md", "README.md"):
+        path = os.path.join(cand2, doc)
+        text = "\n".join(line for line in read(path).splitlines()
+                         if "reap_turns.py" not in line) + "\n"
+        write(path, text)
+    git(cand2, "add", "-A")
+    git(cand2, "commit", "-qm", "drop a stable capability")
+    script(stable2, "iteration.py", [
+        "evidence", "--", sys.executable, "-c", "print('259 passed, 0 failed')"])
+    code, out, err = script(stable2, "iteration.py", ["compare"])
+    check("iteration: removing a capability without a migration blocks",
+          code == 4 and "capabilities removed" in out + err, out + err)
+
+    # Candidate release: the second suite run is bound to the release commit, and only then
+    # does the tag exist. A fake suite keeps this case fast.
+    write(os.path.join(cand2, "scripts", "selftest_models.py"),
+          "print('3 passed, 0 failed')\n")
+    git(cand2, "add", "-A")
+    git(cand2, "commit", "-qm", "fast release suite")
+    code, out, err = script(cand2, "release.py", [
+        "--version", "2.3.0", "--note", "candidate release", "--no-push"])
+    release_path = os.path.join(cand2, "_work", "iteration", "release.json")
+    release = json.loads(read(release_path)) if os.path.isfile(release_path) else {}
+    tagged = subprocess.run(["git", "-C", cand2, "tag", "--points-at", "HEAD"],
+                            capture_output=True, text=True).stdout.split()
+    check("iteration: candidate release binds evidence to the tagged commit",
+          code == 0 and release.get("commit") == head(cand2)
+          and release.get("tests_passed") == 3 and "v2.3.0" in tagged, out + err)
 
 
 if __name__ == "__main__":

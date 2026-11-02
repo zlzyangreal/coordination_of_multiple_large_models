@@ -20,6 +20,8 @@ Exit codes:
 import argparse
 import datetime
 import difflib
+import hashlib
+import json
 import os
 import re
 import subprocess
@@ -34,6 +36,20 @@ import check_docs  # noqa: E402
 
 SKILL = "SKILL.md"
 README = "README.md"
+CANDIDATE = os.path.join("_work", "iteration", "candidate.json")
+RELEASE = os.path.join("_work", "iteration", "release.json")
+
+
+def candidate_context(root):
+    """Candidate identity written by iteration.py init; None in a normal stable release."""
+    try:
+        with open(os.path.join(root, CANDIDATE), encoding="utf-8-sig") as fh:
+            data = json.load(fh)
+    except (OSError, ValueError):
+        return None
+    if not isinstance(data, dict) or data.get("role") != "candidate":
+        return None
+    return data
 
 
 def read(root, name):
@@ -152,6 +168,111 @@ def check_all(root, count=None):
     return check_docs.collect_issues(root, count)
 
 
+def run_candidate_evidence(root, timeout=1800):
+    """Run the suite again at the release commit and bind the evidence to that commit.
+
+    The runner comes from the stable copy named by `candidate.json` when it exists, so a
+    candidate cannot substitute its own evidence tool.
+    """
+    tool_root = root
+    try:
+        with open(os.path.join(root, CANDIDATE), encoding="utf-8-sig") as fh:
+            identity = json.load(fh)
+        stable_root = str(identity.get("stable_root") or "")
+        if stable_root and os.path.isfile(os.path.join(stable_root, "scripts",
+                                                       "test_evidence.py")):
+            tool_root = stable_root
+    except (OSError, ValueError):
+        pass
+    path = os.path.join(tool_root, "scripts", "test_evidence.py")
+    if not os.path.isfile(path):
+        raise RuntimeError("scripts/test_evidence.py not found")
+    done = subprocess.run([sys.executable, path, "record", "--name", "release-candidate",
+                           "--project", root, "--", sys.executable,
+                           "scripts/selftest_models.py"],
+                          cwd=root, capture_output=True, text=True,
+                          encoding="utf-8", errors="replace", timeout=timeout)
+    record_path = os.path.join(root, "_work", "evidence", "release-candidate.json")
+    try:
+        with open(record_path, encoding="utf-8-sig") as fh:
+            record = json.load(fh)
+    except (OSError, ValueError):
+        raise RuntimeError("test_evidence wrote no record:\n" + (done.stdout or "")
+                           + (done.stderr or ""))
+    return record_path, record, done.returncode
+
+
+def finish_candidate(root, args, candidate, count, parent):
+    """Commit docs, prove the exact release commit, tag it, and record the candidate release."""
+    added = git(root, "add", "--", SKILL, README)
+    if added.returncode != 0:
+        git(root, "reset", "--hard", parent)
+        print("[FAIL] staging failed; candidate restored", file=sys.stderr)
+        return 1
+    commit = git(root, "commit", "-m", f"release: v{args.version}")
+    if commit.returncode != 0:
+        git(root, "reset", "--hard", parent)
+        print("[FAIL] commit failed; candidate restored", file=sys.stderr)
+        print((commit.stderr or commit.stdout).strip(), file=sys.stderr)
+        return 1
+    head = git(root, "rev-parse", "HEAD").stdout.strip()
+    changed = set(git(root, "diff", "--name-only", parent, head).stdout.splitlines())
+    if changed - {SKILL, README}:
+        git(root, "reset", "--hard", parent)
+        print("[FAIL] release commit changed more than the version docs: "
+              + ", ".join(sorted(changed - {SKILL, README})), file=sys.stderr)
+        return 1
+    try:
+        record_path, record, code = run_candidate_evidence(root)
+    except (RuntimeError, OSError, subprocess.TimeoutExpired) as exc:
+        git(root, "reset", "--hard", parent)
+        print(f"[FAIL] post-commit evidence failed; candidate restored: {exc}", file=sys.stderr)
+        return 1
+    if code != 0 or record.get("exit_code") != 0 or record.get("git_head") != head:
+        git(root, "reset", "--hard", parent)
+        print("[FAIL] the release commit does not pass the suite; candidate restored", file=sys.stderr)
+        print(f"       evidence: {record_path} (exit {record.get('exit_code')}, "
+              f"head {record.get('git_head')})", file=sys.stderr)
+        return 1
+    if record.get("tests_passed") is not None and record["tests_passed"] != count:
+        git(root, "reset", "--hard", parent)
+        print(f"[FAIL] test count changed after the docs edit ({count} -> "
+              f"{record['tests_passed']}); candidate restored", file=sys.stderr)
+        return 1
+    tag = git(root, "tag", f"v{args.version}")
+    if tag.returncode != 0:
+        print(f"[FAIL] tag v{args.version} failed; the release commit is kept. "
+              f"Recover with: git tag v{args.version}", file=sys.stderr)
+        return 1
+    with open(record_path, "rb") as fh:
+        evidence_sha = hashlib.sha256(fh.read()).hexdigest()
+    release = {
+        "schema": 1,
+        "iteration_id": candidate.get("iteration_id"),
+        "version": args.version,
+        "commit": head,
+        "tag": f"v{args.version}",
+        "evidence": {"path": os.path.join("_work", "evidence", "release-candidate.json")
+                     .replace(os.sep, "/"),
+                     "sha256": evidence_sha},
+        "tests_passed": count,
+        "created_at": datetime.datetime.now().astimezone().isoformat(timespec="seconds"),
+    }
+    os.makedirs(os.path.join(root, os.path.dirname(RELEASE)), exist_ok=True)
+    with open(os.path.join(root, RELEASE), "w", encoding="utf-8", newline="\n") as fh:
+        json.dump(release, fh, ensure_ascii=False, indent=2)
+        fh.write("\n")
+    if args.push:
+        for ref in ("HEAD", f"v{args.version}"):
+            pushed = git(root, "push", "origin", ref)
+            if pushed.returncode != 0:
+                print(f"[WARN] push {ref} failed; local tag stands", file=sys.stderr)
+    print(f"[OK] candidate released v{args.version} at {head[:12]} with {count} tests; "
+          f"evidence {record_path}")
+    print("     stable promotion still needs: iteration.py compare -> approve -> promote")
+    return 0
+
+
 def main():
     ap = argparse.ArgumentParser(description="release the skill")
     ap.add_argument("--root", default=".")
@@ -162,6 +283,10 @@ def main():
     ap.add_argument("--skip-tests", action="store_true")
     ap.add_argument("--test-count", type=int, default=None)
     ap.add_argument("--no-push", action="store_true")
+    ap.add_argument("--push", action="store_true",
+                    help="push branch and tag (candidate releases never push by default)")
+    ap.add_argument("--no-iteration", action="store_true",
+                    help="ignore a candidate identity (stable release path)")
     args = ap.parse_args()
     root = os.path.abspath(args.root)
     if not re.fullmatch(r"\d+\.\d+\.\d+", args.version):
@@ -170,6 +295,18 @@ def main():
     for name in (SKILL, README):
         if not os.path.isfile(os.path.join(root, name)):
             print(f"[FAIL] {name} not found under {root}", file=sys.stderr)
+            return 2
+
+    candidate = None if args.no_iteration else candidate_context(root)
+    if candidate:
+        if args.version != candidate.get("target_version"):
+            print(f"[FAIL] candidate release is v{candidate.get('target_version')}, "
+                  f"not {args.version}", file=sys.stderr)
+            return 2
+        branch = git(root, "rev-parse", "--abbrev-ref", "HEAD").stdout.strip()
+        if candidate.get("branch") and branch != candidate["branch"]:
+            print(f"[FAIL] candidate branch is {branch!r}, expected "
+                  f"{candidate['branch']!r}", file=sys.stderr)
             return 2
 
     skill_text = read(root, SKILL)
@@ -242,6 +379,10 @@ def main():
             print(f"[FAIL] {issue['code']}: {issue['message']}", file=sys.stderr)
         print("[FAIL] post-edit check failed; SKILL.md/README.md restored", file=sys.stderr)
         return 1
+
+    if candidate:
+        parent = git(root, "rev-parse", "HEAD").stdout.strip()
+        return finish_candidate(root, args, candidate, count, parent)
 
     added = git(root, "add", "--", SKILL, README)
     if added.returncode != 0:

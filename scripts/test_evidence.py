@@ -62,6 +62,8 @@ def record(args):
     started = common.now_iso()
     began = time.time()
     timed_out = False
+    workspace_before = common.workspace_identity(project)
+    dirty_before = bool(common.git_output(project, "status", "--porcelain"))
     try:
         done = subprocess.run(command, cwd=project, capture_output=True, text=True,
                               encoding="utf-8", errors="replace", timeout=args.timeout)
@@ -84,15 +86,32 @@ def record(args):
         full = os.path.abspath(path)
         artifacts.append({"path": path, "exists": os.path.isfile(full),
                           "sha256": common.sha256_file(full) if os.path.isfile(full) else None})
+    workspace = common.workspace_identity(project)
+    dirty_after = bool(common.git_output(project, "status", "--porcelain"))
+    iteration = common.iteration_binding(project, cwd=project) or {}
+    counts = re.search(r"(\d+) passed,\s*(\d+) failed", combined)
     record = {
         "id": args.name,
         "protocol_version": 2,
         "command": " ".join(shlex.quote(part) for part in command),
         "argv": command,
         "cwd": project,
+        "workspace_root": workspace["root"],
+        "workspace_volume": workspace["volume"],
+        "git_head": workspace_before.get("git_head"),
+        "git_head_after": workspace.get("git_head"),
+        "git_head_changed": workspace_before.get("git_head") != workspace.get("git_head"),
+        "git_branch": common.git_output(project, "rev-parse", "--abbrev-ref", "HEAD"),
+        "git_dirty_before": dirty_before,
+        "git_dirty_after": dirty_after,
+        "git_dirty": dirty_before or dirty_after,
+        "iteration_id": iteration.get("id"),
+        "workspace_role": iteration.get("cwd_role"),
         "exit_code": code,
         "timed_out": timed_out,
         "duration_s": duration,
+        "tests_passed": int(counts.group(1)) if counts else None,
+        "tests_failed": int(counts.group(2)) if counts else None,
         "started_at": started,
         "finished_at": common.now_iso(),
         "artifacts": artifacts,

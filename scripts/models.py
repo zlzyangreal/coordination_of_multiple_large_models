@@ -1348,6 +1348,18 @@ def _request_id():
 def _append_call(project, record):
     path = cfg_mod.paths(project)["calls"]
     os.makedirs(os.path.dirname(path), exist_ok=True)
+    iteration_dir = os.path.join(project, "_work", "iteration")
+    if os.path.isfile(os.path.join(iteration_dir, "iteration.json")) or \
+            os.path.isfile(os.path.join(iteration_dir, "candidate.json")):
+        try:
+            sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+            import gate_common as _common  # noqa: PLC0415
+            record.setdefault("workspace", _common.workspace_identity(project))
+            binding = _common.iteration_binding(project)
+            if binding:
+                record["iteration"] = binding
+        except Exception:  # noqa: BLE001
+            pass
     with cfg_mod.project_lock(project):
         with open(path, "a", encoding="utf-8") as fh:
             fh.write(json.dumps(record, ensure_ascii=False) + "\n")

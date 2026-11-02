@@ -349,6 +349,8 @@ def main():
     ap.add_argument("--timeout", type=int, default=1200, help="seconds (default 1200)")
     ap.add_argument("--probe", action="store_true",
                     help="ephemeral connectivity test only; never for production")
+    ap.add_argument("--allow-stable-produce", action="store_true",
+                    help="allow a produce call to run in the stable root during an iteration")
     ap.add_argument("--calls-dir", default=CALL_DIR)
     ap.add_argument("--ledger", default=os.path.join("_work", "quota_ledger.md"),
                     help="one row is appended per call (use --no-ledger to skip)")
@@ -427,6 +429,21 @@ def main():
     if not os.path.isdir(cwd):
         print(f"[FAIL] --cd is not a directory: {cwd}", file=sys.stderr)
         return 2
+    if common and cwd != project:
+        cd_problem = workspace_guard(cwd)
+        if cd_problem:
+            print(f"[FAIL] --cd workspace identity mismatch: {cd_problem}", file=sys.stderr)
+            print("       re-pin in that root before using it as the execution workspace",
+                  file=sys.stderr)
+            return 2
+    if role == "produce" and common:
+        binding = common.iteration_binding(project, cwd=cwd)
+        if binding and binding.get("stage") == "development" \
+                and binding.get("cwd_role") == "stable" \
+                and not args.allow_stable_produce:
+            print("[FAIL] a produce call during an iteration must run in the candidate "
+                  "workspace (--cd <candidate>); stable stays the execution end", file=sys.stderr)
+            return 4
 
     request_id = args.request_id or new_request_id()
     env_request = str(env_info.get("request_id") or "").strip() if env_info else ""
@@ -590,7 +607,9 @@ def main():
     produced_hash = None
     if produce_artifact and os.path.isfile(produce_artifact):
         produced_hash = common.sha256_file(produce_artifact) if common else None
-    workspace = common.workspace_identity(project) if common else None
+    workspace = common.workspace_identity(cwd) if common else None
+    caller_workspace = common.workspace_identity(project) if common else None
+    iteration = common.iteration_binding(project, cwd=cwd) if common else None
     record = {
         "request_id": request_id,
         "protocol_version": 2,
@@ -614,6 +633,8 @@ def main():
         "codex": {"path": codex, "version": codex_version(codex)},
         "contract": contract,
         "workspace": workspace,
+        "caller_workspace": caller_workspace,
+        "iteration": iteration,
         "thread_id": thread_id,
         "rollout_path": find_rollout(thread_id),
         "events_path": os.path.abspath(events_path),

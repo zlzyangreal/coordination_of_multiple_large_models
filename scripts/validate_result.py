@@ -104,7 +104,8 @@ def _parse_evidence_block(text):
             continue
         if current is None:
             continue
-        field = re.match(r"^\s+(command|exit_code|at|log_path|log_sha256|summary):\s*(.*)$", line)
+        field = re.match(r"^\s+(command|exit_code|at|log_path|log_sha256|git_head|"
+                         r"iteration_id|workspace_role|summary):\s*(.*)$", line)
         if field:
             key, raw = field.group(1), field.group(2).strip()
             if key == "exit_code":
@@ -208,6 +209,14 @@ def check_test_refs(env, result, errors, warnings):
                       "entry in test_refs")
         return
     by_id = {str(item.get("id")): item for item in evidence if isinstance(item, dict)}
+    expected_head = str(env.get("target_commit") or "")
+    if expected_head in ("", "none"):
+        expected_head = str(env.get("git_head") or "")
+    for item in by_id.values():
+        item_head = str(item.get("git_head") or "")
+        if expected_head and item_head and item_head != expected_head:
+            errors.append(f"$.test_evidence[{item.get('id')}].git_head: {item_head[:12]} "
+                          f"!= envelope target {expected_head[:12]}")
     for index, ref in enumerate(refs):
         path = f"$.test_refs[{index}]"
         if not isinstance(ref, dict):

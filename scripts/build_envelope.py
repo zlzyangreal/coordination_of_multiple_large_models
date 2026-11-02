@@ -334,12 +334,21 @@ def main():
     else:
         version_hash, file_count = sha256(artifact), 1
     producer = args.producer or producer_default()
+    workspace = common.workspace_identity(project)
+    iteration = common.iteration_summary(project) or {}
+    target = iteration.get("target") or {}
 
     lines = [
         f"request_id: {rid}",
         f"envelope_version: 2",
         f"skill_version: {version}",
         f"skill_pinned_at: {pinned_at or 'not-pinned'}",
+        f"workspace_root: {posix(workspace['root'])}",
+        f"workspace_volume: {workspace['volume']}",
+        f"git_head: {workspace.get('git_head') or 'unknown'}",
+        f"iteration_id: {iteration.get('id') or 'none'}",
+        f"target_version: {target.get('version') or 'none'}",
+        f"target_commit: {target.get('commit') or 'none'}",
         f"producer: {producer}",
         f"artifact: {artifact}",
         f"version_hash: {version_hash}",
@@ -375,6 +384,9 @@ def main():
                 f"    at: {record.get('finished_at') or record.get('started_at') or ''}",
                 f"    log_path: {record['log_path']}",
                 f"    log_sha256: {record['log_sha256']}",
+                f"    git_head: {record.get('git_head') or ''}",
+                f"    iteration_id: {record.get('iteration_id') or ''}",
+                f"    workspace_role: {record.get('workspace_role') or ''}",
                 f"    summary: {json.dumps(record.get('summary') or '', ensure_ascii=False)}",
             ]
     else:
