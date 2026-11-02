@@ -387,7 +387,7 @@ python scripts/iteration.py rollback --yes     # 也可运行生成的独立回�
 
 | 版本 | 日期 | 变更 |
 |---|---|---|
-| 2.3.0 | 2026-11-02 | 自举迭代：稳定版驱动候选版（Git worktree 双工作区）、执行端哈希冻结、双身份 pin、commit 绑定测试证据、基线对比、用户验收、快照晋升与独立回退脚本；新增 `scripts/iteration.py` 与 `references/iteration-bootstrap.md`，`release.py` 支持候选发版，`check_docs.py` 增加 v2.3 结构检查；288 项离线自测 |
+| 2.3.0 | 2026-11-02 | 自举迭代：稳定版驱动独立 worktree 候选版，执行端哈希冻结与双身份 pin，commit 绑定测试证据，基线对比、用户验收、快照晋升与独立回退；新增 iteration.py、迭代文档与 28 项迭代专项测试；288 项离线自测 |
 | 2.2.0 | 2026-10-29 | 可执行门禁：方案评审门、评审预算、测试证据、事实包版本、工作区身份、GPT 生产核算与发版检查；设计/实现各 4 轮 GPT 评审后通过；260 项离线自测 |
 | 2.1.0 | 2026-10-27 | 方案设计与任务分发分离：新增 `plan` 角色与 `models.py plan`，按 Reasoning/Design/Agentic/Coding 评分选 planner（可在 `overrides.<model>.scores` 覆盖），先独立评审方案再由 lead 分发；`call --role plan` 拒绝；dsh planner 由会话自己写；155 项离线自测 |
 | 2.0.0 | 2026-10-27 | 大版本：接入 dsh-our-free-model 的多渠道模型能力，并加入任务团队入队审批。多平台模型接入与统一管理：新增 `scripts/models.py`（init/providers/add/key/account/list/discover/test/use/route/chains/call/health/budget/doctor）、`model_registry.py`（内置 76 家提供商注册表 + id 语法）、`model_config.py`（项目级配置、0600 凭据库、状态与跨进程锁、脱敏）、`model_http.py`（chat/responses/messages 三线协议、失败分类）、`model_route.py`（清单、能力/额度/健康路由、家族独立性、降级链）与 `selftest_models.py`（136 项离线自测）；GPT 仍只走 `run_gpt.py`、DeepSeek 仍只走 dsh 会话，HTTP 直连这两族需显式 `allowProtectedFamily`；凭据按项目隔离、只读命令不执行取令牌命令；新增 `references/model-access.md`、`assets/providers.registry.json`（MIT，附 NOTICE）与 `assets/models.config.example.json`；任务开始先 `team scan` 经用户同意才入队（`team.json` 存在即开关）；SKILL 增加第 17~20 条硬规则 |
