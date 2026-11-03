@@ -1485,6 +1485,18 @@ def _call_meta(args, role=None):
     }
 
 
+def _authority_model_guard(project, entry):
+    """Per-attempt governance check for an HTTP model call (disabled = no-op)."""
+    try:
+        import authority  # noqa: PLC0415
+    except ImportError:
+        return 0, None
+    code, info = authority.guard(project, "model-use", model=entry["id"], calls=1)
+    if code == 0:
+        return 0, None
+    return code, f"authority ({code}): {info.get('reason') or info.get('message')}"
+
+
 def _http_call(args, entry, prompt, cfg, project, request_id, attempts):
     pid = entry["provider"]
     setting = _setting(pid, cfg)
@@ -1501,6 +1513,10 @@ def _http_call(args, entry, prompt, cfg, project, request_id, attempts):
         reason = f"cooling down for {cfg_mod.seconds_to_text(cooling)}"
         attempts.append({"model": entry["id"], "outcome": "skipped", "reason": reason})
         return 3, None, reason
+    gcode, greason = _authority_model_guard(project, entry)
+    if gcode:
+        attempts.append({"model": entry["id"], "outcome": "denied", "reason": greason})
+        return gcode, None, greason
     key, source, error = cfg_mod.api_key(record, setting, project)
     if error:
         attempts.append({"model": entry["id"], "outcome": "skipped", "reason": error})
@@ -1512,6 +1528,11 @@ def _http_call(args, entry, prompt, cfg, project, request_id, attempts):
     secrets = [key] if key else []
     last_error = None
     for attempt in range(1, max(0, retries) + 2):
+        gcode, greason = _authority_model_guard(project, entry)
+        if gcode:
+            attempts.append({"model": entry["id"], "outcome": "denied", "reason": greason,
+                             "attempt": attempt})
+            return gcode, None, greason
         cfg_mod.mutate(project, lambda s: cfg_mod.bump_usage(s, pid, calls=1))
         started = time.time()
         try:
@@ -2429,10 +2450,45 @@ def build_parser():
     return parser
 
 
+def _admin_guard(args):
+    """L1/L3 governance check for model/credential administration (disabled = no-op)."""
+    command = getattr(args, "command", "")
+    op = subject = None
+    if command in ("add", "add-custom", "remove", "enable", "disable"):
+        op, subject = "model-add", getattr(args, "provider", None) or getattr(args, "id", None)
+    elif command == "init" and getattr(args, "with_local", False):
+        op, subject = "model-add", "local"
+    elif command == "team" and getattr(args, "team_command", None) in ("add", "clear"):
+        op, subject = "permission", "team"
+    elif command == "chains" and getattr(args, "chain_command", None) in ("set", "remove"):
+        op, subject = "model-use", getattr(args, "name", None)
+    elif command == "key" and getattr(args, "key_command", None) in ("set", "clear"):
+        op, subject = "permission", "key:" + str(getattr(args, "provider", ""))
+    elif command == "account" and getattr(args, "account_command", None) in ("login", "logout"):
+        op, subject = "permission", "account:" + str(getattr(args, "provider", ""))
+    elif command == "use":
+        op, subject = "model-use", getattr(args, "role", None)
+    elif command in ("discover", "test"):
+        op, subject = "model-use", None
+    if not op:
+        return 0
+    try:
+        import authority  # noqa: PLC0415
+        code, info = authority.guard(project_of(args), op, subject=subject)
+    except ImportError:
+        return 0
+    if code != 0:
+        return fail(f"authority ({code}): {info.get('reason') or info.get('message')}", code)
+    return 0
+
+
 def main():
     args = build_parser().parse_args()
     try:
         cfg_mod.ensure_project(project_of(args))
+        guard_code = _admin_guard(args)
+        if guard_code:
+            return guard_code
         return args.func(args)
     except cfg_mod.ConfigError as exc:
         return fail(str(exc), 2)

@@ -42,7 +42,7 @@ git push
 ```
 coordination_of_multiple_large_models/
 ├── README.md            本文件（给人看）
-├── SKILL.md             入口：何时用、30 条硬规则、8 步流程（英文，给 Agent 读）
+├── SKILL.md             入口：何时用、38 条硬规则、8 步流程（英文，给 Agent 读）
 ├── references/
 │   ├── environment.md           环境检查、工具链、网络三查/Clash、权限、工作区身份
 │   ├── model-access.md          模型接入：三条车道、凭据、发现/验活、路由、故障与回退、边界
@@ -52,12 +52,14 @@ coordination_of_multiple_large_models/
 │   ├── execution-and-gates.md   任务契约、任务板、事实包版本、8 步流程、DoD、回归
 │   ├── handoff-protocol.md      零写盘评审、信封、结果 schema、测试证据、方案评审门、复核门
 │   ├── iteration-bootstrap.md   稳定版→候选版自举：双工作区、基线对比、验收、晋升与回退演练
+│   ├── governance.md            人类治理的决策权：委托书、思路评估、L1/L2/L3、请求、授权、守卫、记录
 │   └── failure-and-artifacts.md 失败矩阵、快照与恢复、清理、上报
 ├── scripts/
 │   ├── check_env.py             一键环境自检（codex 路径/版本、进程、代理、可写、实时额度、pin 身份）
 │   ├── session.py               契约 + 根身份锚点：pin / check / status / identity / note
 │   ├── run_gpt.py               唯一 GPT 调用入口：角色、计划门、预算、facts 重哈希、schema 校验、台账
-│   ├── plan_gate.py             方案评审门：hash/mtime、信封、结果、调用记录、家族独立性
+│   ├── authority.py             人类治理决策权：mandate / intake / classify / request / grant / guard / mode / report
+│   ├── plan_gate.py             方案评审门：hash/mtime、信封、结果、调用记录、家族独立性、未闭环 challenge
 │   ├── review_budget.py         评审轮次/分钟预算、原子预留、生产采纳、交付门
 │   ├── facts_pack.py            事实包版本/哈希：freeze / bump / check / show / set-budget
 │   ├── test_evidence.py         记录测试命令、退出码、日志与哈希，供评审信封引用
@@ -83,7 +85,9 @@ coordination_of_multiple_large_models/
     ├── facts-pack.example.md     事实包模板（constraints 与 budgets 分栏）
     ├── providers.registry.json   内置提供商注册表（76 家，来自 dsh-our-free-model，MIT）
     ├── providers.registry.NOTICE.md  数据来源与许可说明
-    └── models.config.example.json    模型配置示例（API Key / 本地 / 自定义网关 / 账号令牌）
+    ├── models.config.example.json    模型配置示例（API Key / 本地 / 自定义网关 / 账号令牌）
+    ├── mandate.example.json          委托书模板（目标、硬约束、偏好、范围、预算）
+    └── decision-record.example.json  决策记录示例（L1/L2/L3、理由、方向、绑定）
 ```
 
 ## 模型接入与统一管理（v2.0.0 起）
@@ -306,6 +310,36 @@ python scripts/quota.py --note "交稿前"                  # 往 _work/quota_le
 | 晋升/回退（C9） | `iteration.py approve` / `release.py`（候选）/ `promote` / `rollback` | 无验收、无对比、tag 不在被测 commit、计划门失败、脏树、晋升后 smoke 失败（自动回退，exit 5） |
 
 一句话：**每个门都是一个退出码，不是一段提醒。** 门禁的共享证据在 `_work/calls/`、`_work/gates/events.jsonl`、`_work/evidence/` 与事实包里。
+
+## 人类治理的决策权（v2.4.0 起）
+
+v2.3 解决"谁生产、谁评审、证据是否成立"；v2.4 增加一条会拒绝的**决策权边界**：人类定目标、硬约束、授权和最终验收；Agent 自主研究、规划、设计、选型和执行；多模型负责独立评审；编排层负责在受控路径上拦截越权、记录决策、说明无法保证的范围。
+
+- **委托书（mandate）**：目标、可交付物、硬约束、偏好、可写路径、可用模型、调用预算。只给目标也可以。
+- **思路评估（intake）**：人的初步思路是"候选方向"而不是命令；`adopt/modify/reject` 必须带评估；拒绝要有依据、可解析的证据引用和替代方案；实质方向改变走 L2。
+- **三级决策**：L1 人类（目标、硬约束、范围、权限、发版/推送/验收、无法归类的事项）；L2 协商（改变已确认方向、架构/技术栈/接口/计划变更、预算变更、目标冲突、歧义、带网络/权限/成本/许可影响的依赖）；L3 Agent（调研、计划、设计、选型、拆分、实现、测试、修复、已授权模型/插件使用）。
+- **请求与拒绝记忆**：同一事项按 `mandate_version:kind:subject` 去重；已解决的不再重复问；被拒绝的方向在显式替代决策前一直有效，不能以"小优化"回来。
+- **授权（grant）**：按操作、路径、模型、调用次数、有效期授权；子 Agent/插件只能取父授权的交集；调用在 `usage.jsonl` 里原子记账并向上逐级扣减。
+- **执行层守卫（guard）**：`run_gpt.py`（生产/评审，启动前）、`models.py`（凭据和每次重试前、模型管理命令）、`release.py`/`iteration.py`（发版、推送、晋升）、`review_budget.py`/`facts_pack.py`（预算/事实包写入）、`build_envelope.py`（把委托书写进评审信封）、`plan_gate.py`（未闭环 challenge 拦截）。拒绝返回退出码，不是提醒。
+- **控制模式**：`on/pause/resume/off`；只有用户能改；`off` 仍需 L1，且必须给 `--safe-stop` 处理未完成请求；状态缺失/损坏为 exit 3（失败关闭），不会自动降级。
+- **记录与复盘**：委托书哈希、决策链（seq/prev/hash）、请求、授权、调用预留、checkpoint、`report`（按模型/层级/类型统计接受率、拒绝方向、越权拦截）。
+
+```bash
+python scripts/authority.py init --goal "v2.4 决策权" \
+  --constraint "不改 dsh/codex 受保护通道" --path scripts/,references/,assets/ \
+  --model "codex:*,dsh:*" --budget-calls 12 --strictness medium
+python scripts/authority.py intake --summary "用 SQLite 队列" --kind idea \
+  --verdict reject --assessment "单写锁达不到 50 worker" --evidence "压测" \
+  --evidence-ref call:R... --alternative "Postgres advisory lock" --direction-key storage
+python scripts/authority.py grant --to lead --ops produce,write,review \
+  --paths scripts/,references/,assets/ --models "codex:*,dsh:*" --max-calls 12 \
+  --by user --reason "v2.4" --approval-ref _work/governance/approvals/grant.md
+python scripts/authority.py guard --op produce --work-package WP1 \
+  --path scripts/authority.py --model codex:auto --json
+python scripts/authority.py report --out _work/governance/report.md
+```
+
+**边界（不夸大）**：守卫覆盖技能自己的受控脚本路径和候选根目录的 clean-tree/提交/diff 检查；宿主工具写文件、任意 shell、以及不调用 `authority.py` 的第三方插件不在拦截范围内，依赖 DSH 沙箱/审批。`--by user` 是**声明**，不是身份认证；设置 `DSH_GOVERNANCE_SECRET` 后可校验 HMAC 审批令牌。删除全部本地标记（含 pin）也超出本地保证。语义改写同一事项无法自动识别，报告会并列相似主题供评审检查。P0-2/P0-7/P0-8/P0-9/P0-10/P1-13/P1-14/P2-16/P2-17 因此标为"部分实现"，详见 `references/governance.md` 的需求矩阵。
 
 ## 自举迭代（v2.3.0 起）
 

@@ -195,7 +195,7 @@ def check_plan(project=".", plan=None, result=None, envelope=None, ledger=None):
     ok(f"independent families: producer {producer_info['family']} / reviewer "
        f"{reviewer_info['family']}")
 
-    # Open blocking findings -------------------------------------------------
+    # Open blocking findings and challenges ---------------------------------
     closed = common.closed_finding_ids(ledger)
     open_items = []
     for finding in data.get("findings") or []:
@@ -208,10 +208,22 @@ def check_plan(project=".", plan=None, result=None, envelope=None, ledger=None):
             open_items.append("<finding without id>")
         elif finding_id not in closed:
             open_items.append(finding_id)
+    # A challenge reopens a prior item for *this* review. Its instance id binds it to the
+    # request id, so an older fixed row for the prior id cannot close it (DR2-01/DR3-01).
+    for challenge in data.get("challenges") or []:
+        if not isinstance(challenge, dict):
+            continue
+        prior_id = _as_text(challenge.get("id"))
+        if not prior_id:
+            open_items.append("<challenge without prior id>")
+            continue
+        instance = f"C-{request_id}-{prior_id}"
+        if instance not in closed:
+            open_items.append(instance)
     if open_items:
-        return fail(5, "plan review has unresolved high/medium finding(s): " +
+        return fail(5, "plan review has unresolved high/medium item(s): " +
                     ", ".join(open_items[:8]))
-    ok("every high/medium finding is closed in the plan ledger")
+    ok("every high/medium finding and challenge instance is closed in the plan ledger")
 
     report["ok"] = True
     report["code"] = 0

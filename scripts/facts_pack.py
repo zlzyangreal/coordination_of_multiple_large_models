@@ -184,6 +184,25 @@ def main():
     ap.add_argument("extra", nargs="*")
     args = ap.parse_args()
 
+    if args.action in ("freeze", "bump", "set-budget"):
+        initial = False
+        if args.action == "freeze" and os.path.isfile(args.path):
+            try:
+                initial = "facts_hash" not in open(args.path, encoding="utf-8-sig").read()
+            except OSError:
+                initial = False
+        if not initial:
+            try:
+                import authority  # noqa: PLC0415
+                gcode, ginfo = authority.guard(os.getcwd(), "budget-change",
+                                               subject="facts")
+            except ImportError:
+                gcode, ginfo = 0, {}
+            if gcode != 0:
+                print(f"[FAIL] authority ({gcode}): "
+                      f"{ginfo.get('reason') or ginfo.get('message')}", file=sys.stderr)
+                return gcode
+
     if args.action == "set-budget":
         if len(args.extra) != 2:
             print("[FAIL] set-budget needs a key and a value (review_calls N | "

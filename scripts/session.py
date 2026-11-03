@@ -57,6 +57,67 @@ def load_pin():
         return None
 
 
+GOV = os.path.join("_work", "governance")
+
+
+def _read_json(path):
+    try:
+        with open(path, encoding="utf-8-sig") as fh:
+            return json.load(fh)
+    except (OSError, ValueError):
+        return None
+
+
+def governance_info():
+    """Compact view for pin/check/status; never creates state."""
+    enabled = os.path.isfile(os.path.join(GOV, "ENABLED"))
+    mandate = _read_json(os.path.join(GOV, "mandate.json"))
+    control = _read_json(os.path.join(GOV, "control.json"))
+    if not enabled and not mandate and not control:
+        return None
+    open_l1 = open_l2 = 0
+    requests_dir = os.path.join(GOV, "requests")
+    if os.path.isdir(requests_dir):
+        for name in os.listdir(requests_dir):
+            if not name.endswith(".json"):
+                continue
+            item = _read_json(os.path.join(requests_dir, name)) or {}
+            if item.get("status") == "open":
+                if item.get("level") == "L1":
+                    open_l1 += 1
+                else:
+                    open_l2 += 1
+    active = {}
+    try:
+        with open(os.path.join(GOV, "grants.jsonl"), encoding="utf-8-sig") as fh:
+            for line in fh:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    row = json.loads(line)
+                except ValueError:
+                    continue
+                if row.get("event") == "grant":
+                    active[row.get("id")] = row
+                elif row.get("event") == "revoke":
+                    active.pop(row.get("id"), None)
+    except OSError:
+        pass
+    return {
+        "enabled": enabled,
+        "mandate_version": (mandate or {}).get("version"),
+        "mandate_hash": (mandate or {}).get("mandate_hash"),
+        "mode": (control or {}).get("mode") or ("enforce" if enabled else "unknown"),
+        "paused": bool((control or {}).get("paused")),
+        "safe_stop": (control or {}).get("safe_stop"),
+        "open_l1": open_l1,
+        "open_l2": open_l2,
+        "grants": len(active),
+    }
+
+
+
 def cmd_pin(args):
     current = read_contract()
     existing = load_pin()
@@ -82,6 +143,15 @@ def cmd_pin(args):
     iteration = common.iteration_summary(os.getcwd())
     if iteration:
         payload["iteration"] = iteration
+    gov = governance_info()
+    if gov and gov.get("enabled"):
+        payload["governance"] = {
+            "enabled": True,
+            "mandate_hash": gov.get("mandate_hash"),
+            "updated_at": payload["pinned_at"],
+        }
+    elif existing and (existing.get("governance") or {}).get("enabled"):
+        payload["governance"] = existing["governance"]
     os.makedirs(os.path.dirname(PIN), exist_ok=True)
     with open(PIN, "w", encoding="utf-8") as fh:
         json.dump(payload, fh, ensure_ascii=False, indent=2)
@@ -116,6 +186,21 @@ def cmd_check(args):
         return 2
     print(f"workspace: {workspace.get('root')} ({workspace.get('drive')}, "
           f"volume {workspace.get('volume')})")
+    gov = governance_info()
+    pinned_gov = pin.get("governance") or {}
+    if pinned_gov.get("enabled"):
+        if not gov or not gov.get("enabled"):
+            print("[FAIL] the pin says governance is enabled but _work/governance/ENABLED is "
+                  "missing or unreadable; protected operations must stay stopped")
+            return 2
+        if pinned_gov.get("mandate_hash") and gov.get("mandate_hash") != pinned_gov["mandate_hash"]:
+            print("[FAIL] the mandate changed after the pin; re-approve and re-pin "
+                  "(governance state drift)")
+            return 2
+        print(f"governance: {gov.get('mode')} v{gov.get('mandate_version')} "
+              f"(open L1 {gov.get('open_l1')} / L2 {gov.get('open_l2')})")
+    elif gov and gov.get("enabled"):
+        print("[NOTE] governance is enabled but this pin predates it; re-pin to record the hash")
     iteration = common.iteration_summary(os.getcwd()) or (pin.get("iteration") if pin else None)
     if iteration:
         target = iteration.get("target") or {}
@@ -199,6 +284,12 @@ def cmd_status(args):
               f"candidate v{target.get('version')} @ "
               f"{str(cand_head or target.get('base_commit'))[:12]} "
               f"({iteration.get('stage')})")
+    gov = governance_info()
+    if gov and gov.get("enabled"):
+        paused = " (paused)" if gov.get("paused") else ""
+        print(f"governance: {gov.get('mode')}{paused} v{gov.get('mandate_version')} | "
+              f"open L1 {gov.get('open_l1')} / L2 {gov.get('open_l2')} | "
+              f"grants {gov.get('grants')}")
     return 0
 
 

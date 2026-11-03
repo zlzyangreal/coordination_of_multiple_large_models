@@ -1347,6 +1347,17 @@ def cmd_promote(args):
         print(f"[FAIL] tag {tag} points at {tag_commit[:12]}, candidate HEAD is {head[:12]}")
         return 4
 
+    try:
+        import authority  # noqa: PLC0415
+        gcode, ginfo = authority.guard(root, "promote", subject=version,
+                                       approval_ref=os.path.join(root, APPROVAL))
+    except ImportError:
+        gcode, ginfo = 0, {}
+    if gcode != 0:
+        print(f"[FAIL] authority ({gcode}): "
+              f"{ginfo.get('reason') or ginfo.get('message')}")
+        return 4
+
     import plan_gate  # noqa: PLC0415
     code, report = plan_gate.check_plan(root)
     if code != 0:
@@ -1435,6 +1446,15 @@ def cmd_promote(args):
     print(f"     rollback : python scripts/iteration.py rollback --yes")
     print(f"                or (standalone) python {shim}")
     if args.push:
+        try:
+            import authority  # noqa: PLC0415
+            gcode, ginfo = authority.guard(root, "push", subject=version)
+        except ImportError:
+            gcode, ginfo = 0, {}
+        if gcode != 0:
+            print(f"[FAIL] authority ({gcode}): "
+                  f"{ginfo.get('reason') or ginfo.get('message')}")
+            return 4
         for ref in ("HEAD", tag):
             pushed = git(root, "push", "origin", ref)
             if pushed.returncode != 0:

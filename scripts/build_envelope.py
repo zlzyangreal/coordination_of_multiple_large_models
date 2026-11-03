@@ -338,6 +338,18 @@ def main():
     iteration = common.iteration_summary(project) or {}
     target = iteration.get("target") or {}
 
+    governance = None
+    try:
+        import authority  # noqa: PLC0415
+        governance = authority.governance_block(project)
+    except ImportError:
+        governance = None
+    except Exception as exc:  # noqa: BLE001
+        print(f"[FAIL] governance state: {exc}")
+        print("       fix with `python scripts/authority.py check`; do not build an "
+              "unattributed envelope")
+        return 2
+
     lines = [
         f"request_id: {rid}",
         f"envelope_version: 2",
@@ -400,6 +412,39 @@ def main():
                       f"    reason: \"{row.get('reason', '').replace(chr(34), chr(39))}\""]
     else:
         lines.append("prior_findings: []")
+    if governance:
+        lines.append("governance:")
+        lines.append(f"  mandate_version: {governance.get('mandate_version')}")
+        lines.append(f"  mandate_hash: {governance.get('mandate_hash')}")
+        lines.append(f"  mode: {governance.get('mode')}")
+        lines.append(f"  goal: {json.dumps(str(governance.get('goal') or ''), ensure_ascii=False)}")
+        lines.append("  hard_constraints:")
+        for item in governance.get("hard_constraints") or []:
+            lines.append(f"    - id: {item.get('id')}")
+            lines.append(f"      text: "
+                         f"{json.dumps(str(item.get('text') or ''), ensure_ascii=False)}")
+        lines.append("  preferences:")
+        for item in governance.get("preferences") or []:
+            lines.append(f"    - id: {item.get('id')}")
+            lines.append(f"      key: {item.get('key')}")
+            lines.append(f"      text: "
+                         f"{json.dumps(str(item.get('text') or ''), ensure_ascii=False)}")
+        lines.append("  accepted_decisions:")
+        for item in governance.get("accepted_decisions") or []:
+            lines.append(f"    - id: {item.get('id')}")
+            lines.append(f"      kind: {item.get('kind')}")
+            lines.append(f"      topic: "
+                         f"{json.dumps(str(item.get('topic') or ''), ensure_ascii=False)}")
+        lines.append("  rejected_directions:")
+        for item in governance.get("rejected_directions") or []:
+            lines.append(f"    - key: {item.get('key')}")
+            lines.append(f"      id: {item.get('id')}")
+        lines.append("  open_requests:")
+        for item in governance.get("open_requests") or []:
+            lines.append(f"    - id: {item.get('id')}")
+            lines.append(f"      level: {item.get('level')}")
+            lines.append(f"      topic: "
+                         f"{json.dumps(str(item.get('topic') or ''), ensure_ascii=False)}")
 
     os.makedirs(os.path.dirname(out), exist_ok=True)
     with open(out, "w", encoding="utf-8") as fh:

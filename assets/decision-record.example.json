@@ -1,0 +1,40 @@
+{
+  "id": "D-20261103-213500-4f2a",
+  "at": "2026-11-03T21:35:00+08:00",
+  "event": "decide",
+  "seq": 2,
+  "prev": "6b1f0c...",
+  "hash": "a2d9...",
+  "kind": "direction",
+  "level": "L2",
+  "key": "1:direction:queue-backend",
+  "subject": "queue-backend",
+  "mandate_version": 1,
+  "topic": "replace SQLite with Postgres",
+  "proposal": "Use Postgres advisory locks for the queue; keep SQLite only for local tests.",
+  "decision": "Accepted. Cost is acceptable and the single-writer limit disappears.",
+  "status": "accepted",
+  "decided_by": "user",
+  "proposed_by": "agent",
+  "reason": "The load target requires concurrent writers; the operational cost is inside the budget.",
+  "direction_key": "direction:queue-backend",
+  "approval_ref": {
+    "path": "_work/governance/approvals/Q-20261103-213500.md",
+    "sha256": "9c1e...",
+    "mode": "unauthenticated"
+  },
+  "artifact": "references/governance.md",
+  "artifact_sha256": "d4b2...",
+  "commit": "a95fd614cfda",
+  "options": [
+    {"id": "sqlite", "text": "keep SQLite", "impact": "single writer, fails the load target"},
+    {"id": "pg", "text": "Postgres advisory locks", "impact": "one service, meets concurrency"}
+  ],
+  "assessment": "SQLite satisfies the prototype but not the 50-worker target; Postgres is the smallest change that does.",
+  "evidence": ["load test with 50 concurrent enqueues"],
+  "alternatives": ["file-per-worker spool"],
+  "supersedes": null,
+  "outcomes": [
+    {"at": "2026-11-05T10:00:00+08:00", "verdict": "met", "observed": "p95 enqueue 12 ms at 50 workers"}
+  ]
+}

@@ -314,6 +314,20 @@ def plan_guard(project):
     return f"plan gate blocked ({code}): {report.get('message')}"
 
 
+def authority_guard(project, role, **kwargs):
+    """Consult the governance guard; absent module or disabled mandate is a no-op."""
+    try:
+        import authority  # noqa: PLC0415
+    except ImportError:
+        return None
+    op = "review" if role in REVIEW_ROLES else ("plan" if role == "plan" else "produce")
+    code, info = authority.guard(project, op, **kwargs)
+    if code == 0:
+        return None
+    return f"authority ({code}): {info.get('reason') or info.get('message')}"
+
+
+
 def main():
     ap = argparse.ArgumentParser(description="single entry point for Codex calls")
     src = ap.add_mutually_exclusive_group(required=True)
@@ -330,6 +344,13 @@ def main():
                     help="work package id from the reviewed plan (produce)")
     ap.add_argument("--produce-artifact", default=None,
                     help="path of the artifact this produce call is expected to create")
+    ap.add_argument("--change", default=None,
+                    help="declared change kind for a produce call outside a work package "
+                         "(classified L1/L2/L3 by authority.py)")
+    ap.add_argument("--direction-key", default=None,
+                    help="direction key checked against rejected directions")
+    ap.add_argument("--subject", default=None,
+                    help="decision subject for a change (defaults to the change kind)")
     ap.add_argument("--why-unclosed", default=None,
                     help="why the previous two review rounds did not close (round 3+)")
     ap.add_argument("--budget-change", default=None,
@@ -496,6 +517,38 @@ def main():
     if not feed_prompt:
         cmd.append(prompt)
 
+    head_before = None
+    scope_changes = []
+    if role == "produce":
+        if not args.produce_artifact:
+            print("[FAIL] a produce call needs --produce-artifact; a writable call without a "
+                  "declared output cannot be scoped", file=sys.stderr)
+            return 2
+        args.produce_artifact = os.path.abspath(args.produce_artifact)
+        if args.sandbox == "danger-full-access":
+            print("[FAIL] governed production must use workspace-write, not "
+                  "danger-full-access", file=sys.stderr)
+            return 2
+        if common:
+            head_before = common.git_output(cwd, "rev-parse", "HEAD")
+            dirty = common.git_output(cwd, "status", "--porcelain")
+            if dirty:
+                print("[FAIL] the writable workspace is dirty; commit or stash before a "
+                      "produce call so its diff is attributable", file=sys.stderr)
+                return 4
+        problem = authority_guard(
+            project, role, path=args.produce_artifact, model=model,
+            work_package=args.work_package, change=args.change,
+            direction_key=args.direction_key, subject=args.subject)
+        if problem:
+            print(f"[FAIL] {problem}", file=sys.stderr)
+            return 2
+    elif role in REVIEW_ROLES or role == "plan":
+        problem = authority_guard(project, role, model=model)
+        if problem:
+            print(f"[FAIL] {problem}", file=sys.stderr)
+            return 2
+
     budget_info = None
     reserved = False
     if role in REVIEW_ROLES:
@@ -533,6 +586,28 @@ def main():
     after = quota_snapshot()
     finished_iso = datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds")
     thread_id = info.get("thread_id")
+
+    scope_violation = []
+    head_after = None
+    if role == "produce" and head_before and common:
+        head_after = common.git_output(cwd, "rev-parse", "HEAD")
+        changed = set()
+        dirty = common.git_output(cwd, "status", "--porcelain") or ""
+        for line in dirty.splitlines():
+            path = line[3:].strip()
+            if " -> " in path:
+                path = path.split(" -> ", 1)[1]
+            if path:
+                changed.add(path)
+        diff = common.git_output(cwd, "diff", "--name-only",
+                                 f"{head_before}..HEAD") or ""
+        changed.update(item.strip() for item in diff.splitlines() if item.strip())
+        target = os.path.normcase(os.path.abspath(args.produce_artifact))
+        target_dir = target if os.path.isdir(target) else os.path.dirname(target)
+        for relative in sorted(changed):
+            full = os.path.normcase(os.path.abspath(os.path.join(cwd, relative)))
+            if full != target and not full.startswith(target_dir + os.sep):
+                scope_violation.append(relative)
 
     status = "ok"
     if info["timed_out"]:
@@ -658,6 +733,11 @@ def main():
         "quota_delta_pts": delta,
         "quota_ledger": ledger_path,
         "turn_cleanup": cleanup,
+        "authority": {
+            "head_before": head_before,
+            "head_after": head_after,
+            "scope_violation": scope_violation,
+        },
         "stderr_tail": info.get("stderr_tail")[-3:],
     }
     with open(record_path, "w", encoding="utf-8") as fh:
@@ -678,6 +758,11 @@ def main():
         print(f"[FAIL] result failed schema validation ({len(schema_errors)} problem(s)); "
               f"see {record_path}", file=sys.stderr)
         return 3
+    if scope_violation:
+        print("[FAIL] authority: produced path(s) outside the declared work-package output: "
+              + ", ".join(scope_violation[:8]), file=sys.stderr)
+        print("       the call record keeps the violation; adoption is refused", file=sys.stderr)
+        return 4
     return 0 if status == "ok" else 1
 
 

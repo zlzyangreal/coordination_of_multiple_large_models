@@ -1,0 +1,65 @@
+{
+  "schema": 1,
+  "version": 1,
+  "created_at": "2026-11-03T21:00:00+08:00",
+  "updated_at": "2026-11-03T21:00:00+08:00",
+  "goal": "Ship v2.4.0 human-governed decision authority without changing the protected model lanes.",
+  "deliverable": "scripts/authority.py, integrations, tests, docs; candidate tag v2.4.0",
+  "ideas": [
+    {
+      "id": "IDEA-1",
+      "summary": "Enforce the boundary with a prompt paragraph and a checklist.",
+      "kind": "idea",
+      "status": "rejected",
+      "assessment": "Prompt-only control is explicitly forbidden by the requirement; a script gate is needed.",
+      "direction_key": "enforcement:prompt-only"
+    }
+  ],
+  "constraints": {
+    "hard": [
+      {
+        "id": "HC-1",
+        "text": "GPT only through scripts/run_gpt.py; DeepSeek only through the DSH host session.",
+        "source": "user"
+      },
+      {
+        "id": "HC-2",
+        "text": "Reviewers write nothing; no new dependency and no background service.",
+        "source": "user"
+      },
+      {
+        "id": "HC-3",
+        "text": "Never claim host-wide enforcement or agent-proof identity.",
+        "source": "user"
+      }
+    ],
+    "preferences": [
+      {
+        "id": "PREF-1",
+        "key": "stability",
+        "text": "Prefer a smaller, testable change over a broad refactor."
+      },
+      {
+        "id": "PREF-2",
+        "key": "open-source-first",
+        "text": "Prefer a mature library only when it does not add a runtime dependency."
+      }
+    ]
+  },
+  "scope": {
+    "paths": ["scripts/", "references/", "assets/", "SKILL.md", "README.md"],
+    "deny_paths": ["_work/governance/", "_work/iteration/"],
+    "models": ["codex:*", "dsh:*"],
+    "plugins": [],
+    "budgets": {
+      "gpt_calls": 12,
+      "review_calls": 2,
+      "minutes": 45
+    }
+  },
+  "authority": {
+    "default": "L3",
+    "strictness": "medium"
+  },
+  "mandate_hash": "computed-by-authority.py"
+}

@@ -53,6 +53,22 @@ def _facts(project):
     return code, message, info
 
 
+def _authority_guard(project, op, **kwargs):
+    """Consult the governance guard when the module exists and a mandate is enabled.
+
+    Returns (0, {}) when governance is disabled (no mandate); the caller keeps its v2.3
+    behavior exactly. This never imports a network or provider module.
+    """
+    try:
+        import authority  # noqa: PLC0415
+    except ImportError:
+        return 0, {}
+    code, info = authority.guard(project, op, **kwargs)
+    if code == 0:
+        return 0, info
+    return code, {"message": f"authority ({code}): {info.get('reason') or info.get('message')}"}
+
+
 def _prior(project, milestone, request_id=None):
     attempts = []
     for attempt in common.all_attempts(project):
@@ -99,6 +115,10 @@ def _evaluate(project, milestone, request_id=None, why_unclosed=None, budget_cha
         "budget_change": budget_change,
         "attempts": [item["request_id"] for item in prior],
     }
+    if budget_change:
+        gcode, ginfo = _authority_guard(project, "budget-change", subject=milestone)
+        if gcode != 0:
+            return gcode, dict(data, message=ginfo.get("message"))
     if count >= 2 and not why_unclosed:
         return 3, dict(data, message=(f"{count} review rounds already ran for {milestone}; "
                                       f"pass --why-unclosed \"why rounds 1-2 did not close\" "
@@ -183,6 +203,9 @@ def check_gate(project, milestone, request_id=None, why_unclosed=None, budget_ch
 
 
 def raise_budget(project, to, reason, milestone=None):
+    gcode, ginfo = _authority_guard(project, "budget-change", subject=milestone or "facts")
+    if gcode != 0:
+        return gcode, ginfo
     code, message, info = _facts(project)
     if code != 0:
         return 2, {"message": f"facts pack is not usable: {message}"}
@@ -235,6 +258,10 @@ def waive(project, tier, approved_by, approval_ref, reason):
                               f"{reference}"}
     if not reason.strip():
         return 2, {"message": "waive needs --reason"}
+    gcode, ginfo = _authority_guard(project, "permission", subject="delivery-waiver",
+                                    approval_ref=reference)
+    if gcode != 0:
+        return gcode, ginfo
     digest = common.sha256_file(reference)
     common.append_event(project, "deviation", reason=reason, after=tier,
                         approved_by=approved_by, approval_ref=reference,
@@ -267,6 +294,23 @@ def _plan_work_packages(project):
 def _output_matches(artifact, output, project):
     artifact_path = common.norm_path(artifact)
     declared = output.strip().strip("`")
+    # A produce call during an iteration writes into the candidate worktree while the reviewed
+    # plan lives in the stable root. Compare the logical (candidate-relative) path in that case.
+    try:
+        iteration = common.iteration_summary(project) or {}
+        candidate = (iteration.get("target") or {}).get("root")
+    except Exception:  # noqa: BLE001
+        candidate = None
+    if candidate:
+        cand = common.norm_path(candidate)
+        art = common.norm_path(artifact)
+        if art == cand or art.startswith(cand + os.sep):
+            rel = os.path.relpath(os.path.abspath(artifact), os.path.abspath(candidate))
+            rel_norm = common.norm_path(rel)
+            if rel_norm == common.norm_path(declared):
+                return True
+            if declared.endswith(("/", "\\")) or os.path.isdir(os.path.join(candidate, declared)):
+                return rel_norm.startswith(common.norm_path(declared) + os.sep)
     declared_path = declared if os.path.isabs(declared) \
         else os.path.join(project, declared)
     declared_path = os.path.abspath(declared_path)

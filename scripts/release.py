@@ -299,6 +299,10 @@ def main():
 
     candidate = None if args.no_iteration else candidate_context(root)
     if candidate:
+        if args.push:
+            print("[FAIL] a candidate release cannot push; the stable promotion is the only "
+                  "push boundary", file=sys.stderr)
+            return 4
         if args.version != candidate.get("target_version"):
             print(f"[FAIL] candidate release is v{candidate.get('target_version')}, "
                   f"not {args.version}", file=sys.stderr)
@@ -308,6 +312,25 @@ def main():
             print(f"[FAIL] candidate branch is {branch!r}, expected "
                   f"{candidate['branch']!r}", file=sys.stderr)
             return 2
+    elif not args.dry_run:
+        try:
+            import authority  # noqa: PLC0415
+            gcode, ginfo = authority.guard(root, "release", subject=args.version)
+        except ImportError:
+            gcode, ginfo = 0, {}
+        if gcode != 0:
+            print(f"[FAIL] authority ({gcode}): "
+                  f"{ginfo.get('reason') or ginfo.get('message')}", file=sys.stderr)
+            return 4
+        if not args.no_push:
+            try:
+                gcode, ginfo = authority.guard(root, "push", subject=args.version)
+            except ImportError:
+                gcode, ginfo = 0, {}
+            if gcode != 0:
+                print(f"[FAIL] authority ({gcode}): "
+                      f"{ginfo.get('reason') or ginfo.get('message')}", file=sys.stderr)
+                return 4
 
     skill_text = read(root, SKILL)
     readme_text = read(root, README)
@@ -403,6 +426,15 @@ def main():
               f"Recover with: git tag v{args.version}", file=sys.stderr)
         return 1
     if not args.no_push:
+        try:
+            import authority  # noqa: PLC0415
+            gcode, ginfo = authority.guard(root, "push", subject=args.version)
+        except ImportError:
+            gcode, ginfo = 0, {}
+        if gcode != 0:
+            print(f"[FAIL] authority ({gcode}): "
+                  f"{ginfo.get('reason') or ginfo.get('message')}", file=sys.stderr)
+            return 4
         push = git(root, "push")
         if push.returncode != 0:
             print("[FAIL] branch push failed; local commit and tag are kept. "
