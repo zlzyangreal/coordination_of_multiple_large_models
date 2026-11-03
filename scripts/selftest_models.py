@@ -2699,6 +2699,19 @@ def governance_cases(env, work):
     check("governance: an L3/agent decision cannot supersede a rejection", code == 4,
           out + err)
 
+    code, out, err = auth_run(["request", "--kind", "direction", "--subject", "reopen-test",
+                               "--topic", "reopen", "--proposal", "x",
+                               "--evidence-ref", "log:evidence.log", "--json"])
+    reopen_id = as_json(out).get("id")
+    auth_run(["resolve", "--request", reopen_id, "--decision", "reject", "--by", "user",
+              "--note", "no", "--approval-ref", approval])
+    code, out, err = auth_run(["request", "--kind", "direction", "--subject", "reopen-test",
+                               "--topic", "reopen again", "--proposal", "x",
+                               "--reopen", "--reason", "again", "--evidence-ref",
+                               "log:evidence.log", "--json"])
+    check("governance: reopening needs evidence not already on the settled record",
+          code == 4, out + err)
+
     code, out, err = auth_run(["grant", "--to", "lead", "--ops", "produce,write",
                                "--paths", "scripts/", "--models", "codex:*",
                                "--max-calls", "2", "--by", "user", "--reason", "fixture",

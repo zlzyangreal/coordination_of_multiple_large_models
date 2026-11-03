@@ -975,6 +975,12 @@ def command_request(project, args):
             raise GovernanceError(2, "reopen requires --reason and --evidence-ref")
         for reference in args.evidence_ref:
             _verify_evidence_ref(project, reference)
+        prior_refs = set(settled.get("evidence_refs") or [])
+        for item in _requests(project):
+            if item.get("decision_id") == settled.get("id"):
+                prior_refs.update(item.get("evidence_refs") or [])
+        if not any(reference not in prior_refs for reference in args.evidence_ref):
+            raise GovernanceError(4, "reopen needs evidence not already on the settled record")
         level = settled.get("level") or level
         supersedes = settled.get("id")
     elif args.reopen:
