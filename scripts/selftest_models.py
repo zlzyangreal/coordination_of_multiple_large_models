@@ -240,6 +240,7 @@ def main():
         plan_cases(env, work, port_a, port_b)
         gate_cases(env, work, port_a, port_b)
         iteration_cases(env, work)
+        governance_cases(env, work)
     finally:
         for server in (server_a, server_b, server_c):
             server.shutdown()
@@ -2577,6 +2578,284 @@ def iteration_cases(env, work):
     check("iteration: candidate release binds evidence to the tagged commit",
           code == 0 and release.get("commit") == head(cand2)
           and release.get("tests_passed") == 3 and "v2.3.0" in tagged, out + err)
+
+
+def governance_cases(env, work):
+    """v2.4 authority: mandate, intake, levels, requests, grants, guards, mode, records."""
+    import authority as authority_mod  # noqa: PLC0415
+
+    auth = os.path.join(SKILL, "scripts", "authority.py")
+    gov = os.path.join(work, "governance-project")
+    os.makedirs(gov)
+
+    def write(path, text):
+        os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+        with open(path, "w", encoding="utf-8", newline="\n") as fh:
+            fh.write(text)
+
+    def read(path):
+        with open(path, encoding="utf-8-sig") as fh:
+            return fh.read()
+
+    def auth_run(args):
+        done = subprocess.run([sys.executable, auth] + args, cwd=gov,
+                              capture_output=True, text=True, encoding="utf-8",
+                              errors="replace", env=env)
+        return done.returncode, done.stdout or "", done.stderr or ""
+
+    def as_json(text):
+        start = text.find("{")
+        if start < 0:
+            return {}
+        try:
+            return json.loads(text[start:])
+        except ValueError:
+            return {}
+
+    def governance_dir():
+        return os.path.join(gov, "_work", "governance")
+
+    approval = os.path.join(gov, "approval.md")
+    write(approval, "I approve this test grant. - user\n")
+    write(os.path.join(gov, "README.md"), "# fixture\n")
+    write(os.path.join(gov, "evidence.log"), "load test: 50 workers\n")
+
+    code, out, err = auth_run(["init", "--goal", "governance fixture",
+                               "--hard-constraint", "no network",
+                               "--path", "scripts/", "--model", "codex:*",
+                               "--gpt-calls", "8", "--strictness", "normal"])
+    check("governance: init writes mandate, control and sentinel", code == 0
+          and os.path.isfile(os.path.join(governance_dir(), "mandate.json"))
+          and os.path.isfile(os.path.join(governance_dir(), "control.json"))
+          and os.path.isfile(os.path.join(governance_dir(), "ENABLED")), out + err)
+    code, out, err = auth_run(["check"])
+    check("governance: a fresh state checks clean", code == 0, out + err)
+    code, out, err = auth_run(["init", "--goal", "second"])
+    check("governance: init without --force is refused", code == 4, out + err)
+    mandate_path = os.path.join(governance_dir(), "mandate.json")
+    mandate = json.loads(read(mandate_path))
+    mandate["goal"] = "tampered"
+    write(mandate_path, json.dumps(mandate, ensure_ascii=False, indent=2) + "\n")
+    code, out, err = auth_run(["check"])
+    check("governance: a hand-edited mandate is stale", code == 3, out + err)
+    auth_run(["init", "--goal", "governance fixture",
+              "--hard-constraint", "no network", "--path", "scripts/",
+              "--model", "codex:*", "--gpt-calls", "8", "--force"])
+
+    levels = {}
+    for kind in ("target", "direction", "implementation", "unknown", "release"):
+        code, out, err = auth_run(["classify", "--kind", kind, "--json"])
+        levels[kind] = as_json(out).get("level")
+    check("governance: classifier maps L1/L2/L3 and unknown to L1",
+          levels.get("target") == "L1" and levels.get("direction") == "L2"
+          and levels.get("implementation") == "L3" and levels.get("unknown") == "L1"
+          and levels.get("release") == "L1", str(levels))
+    code, out, err = auth_run(["classify", "--kind", "architecture-initial",
+                               "--strictness", "high", "--json"])
+    check("governance: high strictness escalates an initial architecture",
+          as_json(out).get("level") == "L2", out + err)
+    code, out, err = auth_run(["classify", "--kind", "direction",
+                               "--strictness", "low", "--json"])
+    check("governance: low strictness cannot lower a direction change",
+          as_json(out).get("level") == "L2", out + err)
+
+    code, out, err = auth_run(["request", "--kind", "direction", "--subject", "storage",
+                               "--topic", "use SQLite", "--proposal", "SQLite", "--json"])
+    first = as_json(out).get("id")
+    code2, out2, err2 = auth_run(["request", "--kind", "direction", "--subject", "storage",
+                                  "--topic", "use SQLite again", "--proposal", "SQLite",
+                                  "--json"])
+    check("governance: one canonical key, one open request", code == 0 and code2 == 0
+          and first and as_json(out2).get("id") == first, out + out2 + err + err2)
+    code, out, err = auth_run(["pending"])
+    check("governance: pending lists the open request", code == 0 and first in out,
+          out + err)
+    code, out, err = auth_run(["resolve", "--request", first, "--decision", "accept",
+                               "--by", "user", "--note", "accepted",
+                               "--approval-ref", approval])
+    check("governance: resolve accept closes the request", code == 0, out + err)
+    code, out, err = auth_run(["guard", "--op", "produce", "--change", "direction",
+                               "--subject", "storage", "--path",
+                               os.path.join(gov, "scripts", "q.py"),
+                               "--model", "codex:auto", "--json"])
+    check("governance: an accepted L2 change guards clean", code == 0, out + err)
+    code, out, err = auth_run(["request", "--kind", "direction", "--subject", "cache",
+                               "--topic", "cache in process", "--proposal", "dict", "--json"])
+    second = as_json(out).get("id")
+    code, out, err = auth_run(["resolve", "--request", second, "--decision", "reject",
+                               "--by", "user", "--note", "rejected",
+                               "--direction-key", "direction:cache",
+                               "--approval-ref", approval])
+    code, out, err = auth_run(["guard", "--op", "produce", "--change", "direction",
+                               "--subject", "cache", "--path",
+                               os.path.join(gov, "scripts", "r.py"),
+                               "--model", "codex:auto", "--json"])
+    check("governance: a rejected direction blocks its key", code == 4, out + err)
+
+    code, out, err = auth_run(["grant", "--to", "lead", "--ops", "produce,write",
+                               "--paths", "scripts/", "--models", "codex:*",
+                               "--max-calls", "2", "--by", "user", "--reason", "fixture",
+                               "--approval-ref", approval, "--json"])
+    grant_payload = as_json(out)
+    grant_id = grant_payload.get("id") or (grant_payload.get("grant") or {}).get("id")
+    check("governance: grant accepts comma-separated ops", code == 0 and grant_id, out + err)
+    code, out, err = auth_run(["guard", "--op", "produce", "--change", "implementation",
+                               "--subject", "one", "--path",
+                               os.path.join(gov, "scripts", "s.py"),
+                               "--model", "codex:auto", "--json"])
+    check("governance: an in-scope produce is allowed", code == 0, out + err)
+    code, out, err = auth_run(["guard", "--op", "produce", "--change", "implementation",
+                               "--subject", "two", "--path",
+                               os.path.join(gov, "scripts", "t.py"),
+                               "--model", "codex:auto", "--json"])
+    check("governance: a second call fits the grant", code == 0, out + err)
+    code, out, err = auth_run(["guard", "--op", "produce", "--change", "implementation",
+                               "--subject", "three", "--path",
+                               os.path.join(gov, "scripts", "u.py"),
+                               "--model", "codex:auto", "--json"])
+    check("governance: the third call exhausts the grant budget", code == 4, out + err)
+    code, out, err = auth_run(["guard", "--op", "produce", "--change", "implementation",
+                               "--subject", "outside", "--path",
+                               os.path.join(gov, "secret", "v.py"),
+                               "--model", "codex:auto", "--json"])
+    check("governance: an out-of-scope path is denied", code == 4, out + err)
+    code, out, err = auth_run(["grant", "--to", "lead", "--parent", grant_id,
+                               "--ops", "produce", "--paths", "../",
+                               "--by", "user", "--reason", "widen",
+                               "--approval-ref", approval])
+    check("governance: a child grant cannot widen its parent", code == 4, out + err)
+
+    auth_run(["register", "--agent", "A1", "--parent", "lead"])
+    code, out, err = auth_run(["grant", "--to", "A1", "--ops", "produce",
+                               "--paths", "scripts/", "--max-calls", "1",
+                               "--by", "user", "--reason", "child",
+                               "--approval-ref", approval])
+    code, out, err = auth_run(["guard", "--op", "produce", "--change", "implementation",
+                               "--subject", "child", "--path",
+                               os.path.join(gov, "scripts", "w.py"),
+                               "--model", "codex:auto", "--agent", "A1", "--json"])
+    check("governance: a registered subagent uses its own narrow grant", code == 0, out + err)
+    code, out, err = auth_run(["guard", "--op", "produce", "--change", "implementation",
+                               "--subject", "unknown", "--path",
+                               os.path.join(gov, "scripts", "x.py"),
+                               "--model", "codex:auto", "--agent", "A2", "--json"])
+    check("governance: an unregistered agent is denied", code == 4, out + err)
+
+    auth_run(["grant", "--to", "lead", "--ops", "plugin-use", "--paths", "scripts/",
+              "--by", "user", "--reason", "plugin", "--approval-ref", approval])
+    code, out, err = auth_run(["plugin", "add", "--name", "echo", "--op", "echo",
+                               "--by", "user", "--reason", "fixture",
+                               "--approval-ref", approval])
+    code, out, err = auth_run(["guard", "--op", "plugin-use", "--plugin", "echo",
+                               "--subject", "echo", "--json"])
+    check("governance: a registered plugin use is allowed", code == 0, out + err)
+    code, out, err = auth_run(["guard", "--op", "plugin-use", "--plugin", "nope",
+                               "--subject", "echo", "--json"])
+    check("governance: an unregistered plugin is denied", code == 4, out + err)
+
+    control_path = os.path.join(governance_dir(), "control.json")
+    control = json.loads(read(control_path))
+    write(control_path, "{ broken")
+    code, out, err = auth_run(["guard", "--op", "review", "--model", "codex:auto", "--json"])
+    check("governance: corrupt control fails closed", code == 3, out + err)
+    write(control_path, json.dumps(control, ensure_ascii=False, indent=2) + "\n")
+
+    code, out, err = auth_run(["intake", "--summary", "use a prompt", "--kind", "idea",
+                               "--verdict", "reject", "--assessment", "not enforcement",
+                               "--evidence", "requirement", "--evidence-ref",
+                               "log:evidence.log", "--alternative", "script gate",
+                               "--direction-key", "enforcement"])
+    check("governance: intake reject needs and accepts a log ref", code == 0, out + err)
+    code, out, err = auth_run(["intake", "--summary", "bad ref", "--kind", "idea",
+                               "--verdict", "reject", "--assessment", "no",
+                               "--evidence", "x", "--evidence-ref", "call:R-nope",
+                               "--alternative", "y"])
+    check("governance: an unknown call evidence ref is refused", code == 4, out + err)
+
+    code, out, err = auth_run(["mode", "off", "--by", "user", "--reason", "test",
+                               "--safe-stop", "pause"])
+    check("governance: mode off needs an approval artifact", code == 2, out + err)
+    code, out, err = auth_run(["mode", "off", "--by", "user", "--reason", "test",
+                               "--safe-stop", "pause", "--approval-ref", approval])
+    check("governance: the user can suspend control with an approval", code == 0, out + err)
+    code, out, err = auth_run(["guard", "--op", "release", "--subject", "1.2.3", "--json"])
+    check("governance: suspension never waives an L1 release", code == 4, out + err)
+    auth_run(["mode", "on", "--by", "user", "--reason", "resume"])
+    auth_run(["mode", "pause", "--by", "user", "--reason", "pause"])
+    code, out, err = auth_run(["guard", "--op", "produce", "--change", "implementation",
+                               "--subject", "paused", "--path",
+                               os.path.join(gov, "scripts", "y.py"),
+                               "--model", "codex:auto", "--json"])
+    check("governance: pause stops new writable calls", code == 4, out + err)
+    auth_run(["mode", "resume", "--by", "user", "--reason", "resume"])
+
+    code, out, err = auth_run(["decide", "--kind", "release", "--subject", "9.9.9",
+                               "--topic", "release 9.9.9", "--proposal", "release",
+                               "--decision", "accept", "--by", "user",
+                               "--reason", "approved", "--approval-ref", approval,
+                               "--artifact", "README.md"])
+    check("governance: an L1 release decision requires a binding", code == 0, out + err)
+    code, out, err = auth_run(["guard", "--op", "release", "--subject", "9.9.9", "--json"])
+    check("governance: an accepted release decision allows the release", code == 0, out + err)
+    code, out, err = auth_run(["guard", "--op", "promote", "--subject", "9.9.9",
+                               "--approval-ref", approval, "--json"])
+    check("governance: promote needs the iteration approval", code == 0, out + err)
+
+    code, out, err = auth_run(["checkpoint", "--phase", "review", "--note", "fixture"])
+    code2, out2, err2 = auth_run(["resume", "--check"])
+    check("governance: checkpoint/resume restores the phase", code == 0 and code2 == 0
+          and "verify" in out2, out + err + out2 + err2)
+
+    block = authority_mod.governance_block(gov)
+    check("governance: the envelope block carries the mandate",
+          isinstance(block, dict) and block.get("goal") == "governance fixture"
+          and block.get("hard_constraints") and block.get("accepted_decisions"), str(block))
+    code, out, err = auth_run(["report", "--json"])
+    report = as_json(out)
+    check("governance: report counts decisions", code == 0
+          and report.get("accepted", 0) >= 2, out + err)
+
+    subprocess.run([sys.executable, os.path.join(SKILL, "scripts", "session.py"), "pin"],
+                   cwd=gov, capture_output=True, text=True, encoding="utf-8",
+                   errors="replace", env=env)
+    auth_run(["init", "--goal", "changed after pin", "--path", "scripts/",
+              "--model", "codex:*", "--gpt-calls", "8", "--force"])
+    done = subprocess.run([sys.executable, os.path.join(SKILL, "scripts", "session.py"),
+                           "check"], cwd=gov, capture_output=True, text=True,
+                          encoding="utf-8", errors="replace", env=env)
+    check("governance: session check detects mandate drift after the pin",
+          done.returncode == 2, (done.stdout or "") + (done.stderr or ""))
+
+    import shutil  # noqa: PLC0415
+    gov2 = os.path.join(work, "governance-delete")
+    os.makedirs(gov2)
+    subprocess.run([sys.executable, auth, "init", "--goal", "delete fixture",
+                    "--path", "."], cwd=gov2, capture_output=True, text=True,
+                   encoding="utf-8", errors="replace", env=env)
+    shutil.rmtree(os.path.join(gov2, "_work", "governance"))
+    done = subprocess.run([sys.executable, auth, "guard", "--op", "review",
+                           "--model", "codex:auto", "--json"], cwd=gov2,
+                          capture_output=True, text=True, encoding="utf-8",
+                          errors="replace", env=env)
+    check("governance: deleting the state while the pin says enabled fails closed",
+          done.returncode == 3, (done.stdout or "") + (done.stderr or ""))
+
+    done = subprocess.run([sys.executable, os.path.join(SKILL, "scripts", "session.py"),
+                           "status", "--no-quota"], cwd=gov, capture_output=True, text=True,
+                          encoding="utf-8", errors="replace", env=env)
+    check("governance: session status prints the governance line",
+          "governance:" in (done.stdout or ""), done.stdout + done.stderr)
+    done = subprocess.run([sys.executable, MODELS, "-C", gov, "add", "deepseek"], cwd=gov,
+                          capture_output=True, text=True, encoding="utf-8",
+                          errors="replace", env=env)
+    check("governance: model administration is denied without an L1 decision",
+          done.returncode == 4, (done.stdout or "") + (done.stderr or ""))
+
+    import run_gpt  # noqa: PLC0415
+    problem = run_gpt.authority_guard(gov, "produce", path=os.path.join(gov, "scripts", "z.py"),
+                                      change=None, work_package=None)
+    check("governance: run_gpt refuses a produce call with no WP or change",
+          isinstance(problem, str) and problem.startswith("authority (2)"), str(problem))
 
 
 if __name__ == "__main__":
