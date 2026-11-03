@@ -326,8 +326,8 @@ v2.3 解决"谁生产、谁评审、证据是否成立"；v2.4 增加一条会�
 
 ```bash
 python scripts/authority.py init --goal "v2.4 决策权" \
-  --constraint "不改 dsh/codex 受保护通道" --path scripts/,references/,assets/ \
-  --model "codex:*,dsh:*" --budget-calls 12 --strictness medium
+  --hard-constraint "不改 dsh/codex 受保护通道" --path scripts/,references/,assets/ \
+  --model "codex:*,dsh:*" --gpt-calls 12 --strictness normal
 python scripts/authority.py intake --summary "用 SQLite 队列" --kind idea \
   --verdict reject --assessment "单写锁达不到 50 worker" --evidence "压测" \
   --evidence-ref call:R... --alternative "Postgres advisory lock" --direction-key storage

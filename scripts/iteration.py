@@ -1118,6 +1118,10 @@ def cmd_approve(args):
     if not args.by or not str(args.by).strip():
         print("[FAIL] --by is required: record who accepted the candidate")
         return 2
+    if str(args.by).strip() != "user":
+        print("[FAIL] acceptance is an L1 user decision; `--by user` is the only accepted "
+              "identity")
+        return 4
     approval = {
         "schema": 1,
         "iteration_id": manifest.get("iteration_id"),
@@ -1321,6 +1325,9 @@ def cmd_promote(args):
     if not isinstance(approval, dict):
         print("[FAIL] the user has not accepted this candidate (`iteration.py approve --by ...`)")
         return 4
+    if approval.get("by") != "user":
+        print("[FAIL] the stored approval is not a user attestation; promotion is refused")
+        return 4
     if approval.get("candidate_commit") != head or \
             approval.get("comparison_sha256") != sha256_file(os.path.join(root, COMPARISON)):
         print("[FAIL] approval does not match the current comparison/candidate")
@@ -1352,6 +1359,10 @@ def cmd_promote(args):
         gcode, ginfo = authority.guard(root, "promote", subject=version,
                                        approval_ref=os.path.join(root, APPROVAL))
     except ImportError:
+        markers = common.governance_markers(root)
+        if markers.get("enabled") or markers.get("any_file"):
+            print("[FAIL] governance is enabled but scripts/authority.py is unavailable")
+            return 4
         gcode, ginfo = 0, {}
     if gcode != 0:
         print(f"[FAIL] authority ({gcode}): "
@@ -1450,6 +1461,11 @@ def cmd_promote(args):
             import authority  # noqa: PLC0415
             gcode, ginfo = authority.guard(root, "push", subject=version)
         except ImportError:
+            markers = common.governance_markers(root)
+            if markers.get("enabled") or markers.get("any_file"):
+                print("[FAIL] governance is enabled but scripts/authority.py is "
+                      "unavailable")
+                return 4
             gcode, ginfo = 0, {}
         if gcode != 0:
             print(f"[FAIL] authority ({gcode}): "

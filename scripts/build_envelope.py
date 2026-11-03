@@ -343,6 +343,11 @@ def main():
         import authority  # noqa: PLC0415
         governance = authority.governance_block(project)
     except ImportError:
+        markers = common.governance_markers(project)
+        if markers.get("enabled") or markers.get("any_file"):
+            print("[FAIL] governance is enabled but scripts/authority.py is unavailable; "
+                  "refusing to build an unattributed envelope")
+            return 2
         governance = None
     except Exception as exc:  # noqa: BLE001
         print(f"[FAIL] governance state: {exc}")

@@ -383,12 +383,11 @@ def load_governance(project):
         return None, None, "disabled control must use suspended mode"
     if control.get("enabled") is not False and control.get("mode") not in ("enforce", "suspended"):
         return None, None, "control mode is invalid"
-    if pin_marker is not None:
-        if pin_marker.get("enabled") is not True:
-            return None, None, "pin and sentinel disagree"
-        pinned_hash = pin_marker.get("mandate_hash")
-        if pinned_hash != actual:
-            return None, None, "pin and mandate hashes disagree"
+    if pin_marker is None or pin_marker.get("enabled") is not True:
+        return None, None, "enabled but the skill pin has no enabled governance marker"
+    pinned_hash = pin_marker.get("mandate_hash")
+    if pinned_hash != actual:
+        return None, None, "pin and mandate hashes disagree"
     for relative in (DECISIONS, GRANTS):
         problems = chain_check(_path(project, relative))
         if problems:
@@ -507,9 +506,13 @@ def _blocked_directions(decisions):
         for later in accepted_lifts:
             if int(later.get("last_seq", 0)) <= int(item.get("last_seq", 0)):
                 continue
+            # Only a user L1/L2 decision may lift a rejection, and it must name the
+            # rejected record. L3/self-authored accepts never clear it (IR-04).
+            if later.get("decided_by") != "user" or later.get("level") not in ("L1", "L2"):
+                continue
             supersedes = later.get("supersedes")
             supersedes = supersedes if isinstance(supersedes, list) else [supersedes]
-            if item.get("id") in supersedes or later.get("direction_key") == key:
+            if item.get("id") in supersedes:
                 lifted = True
                 break
         if not lifted and not item.get("superseded_by"):
@@ -970,6 +973,8 @@ def command_request(project, args):
             raise GovernanceError(4, "the canonical decision key is already settled")
         if not args.reason or not args.evidence_ref:
             raise GovernanceError(2, "reopen requires --reason and --evidence-ref")
+        for reference in args.evidence_ref:
+            _verify_evidence_ref(project, reference)
         level = settled.get("level") or level
         supersedes = settled.get("id")
     elif args.reopen:
@@ -1096,9 +1101,13 @@ def command_decide(project, args):
     supersedes = args.supersedes
     if previous and not supersedes:
         if args.decision == "accept" and previous.get("status") == "rejected":
+            if args.by != "user" or level not in ("L1", "L2"):
+                raise GovernanceError(4, "only a user L1/L2 decision can lift a rejection")
             supersedes = previous.get("id")
         else:
             raise GovernanceError(4, "the canonical decision key is already settled")
+    if supersedes and (args.by != "user" or level not in ("L1", "L2")):
+        raise GovernanceError(4, "only a user L1/L2 decision can supersede a prior decision")
     artifact = None
     artifact_hash = None
     if args.artifact:
@@ -1474,6 +1483,7 @@ def _path_allowed(absolute, project, roots):
 
 def _select_grant(project, agent, op, absolute_path, model):
     grants = _grant_map(project)
+    mandate, _control = _require_state(project)
     actor = [grant for grant in grants.values() if grant.get("to") == agent]
     if not actor:
         if agent == "lead":
@@ -1481,10 +1491,17 @@ def _select_grant(project, agent, op, absolute_path, model):
         raise GovernanceError(4, "registered subagent has no active grant")
     denial = None
     for grant in reversed(actor):
+        if grant.get("mandate_version") not in (None, mandate["version"]):
+            denial = GovernanceError(4, "grant predates the current mandate; regrant")
+            continue
         try:
             chain = _active_chain(grants, grant["id"])
         except GovernanceError as exc:
             denial = exc
+            continue
+        if any(item.get("mandate_version") not in (None, mandate["version"])
+               for item in chain):
+            denial = GovernanceError(4, "grant chain predates the current mandate")
             continue
         if grant.get("ops") and op not in grant.get("ops", []):
             continue
@@ -1756,16 +1773,17 @@ def _guard_impl(project, op, path=None, model=None, agent="lead", plugin=None,
         grant_chain, has_grant = [], False
     else:
         grant_chain, has_grant = _select_grant(project, agent, normalized_op, absolute, model)
-        if not has_grant:
-            scope = _scope(mandate)
-            if absolute is not None and not _path_allowed(absolute, project,
-                                                          scope.get("paths") or ["."]):
-                raise GovernanceError(4, "path is outside the mandate")
-            if not _model_allowed(model, scope.get("models") or []):
-                raise GovernanceError(4, "model is outside the mandate")
-            allowed_ops = scope.get("ops") or []
-            if allowed_ops and normalized_op not in allowed_ops:
-                raise GovernanceError(4, "operation is outside the mandate")
+    # The current mandate is re-applied even when a grant exists: a mandate narrowing must
+    # invalidate the wider parts of an older grant (IR-05).
+    scope = _scope(mandate)
+    if absolute is not None and not _path_allowed(absolute, project,
+                                                  scope.get("paths") or ["."]):
+        raise GovernanceError(4, "path is outside the mandate")
+    if not _model_allowed(model, scope.get("models") or []):
+        raise GovernanceError(4, "model is outside the mandate")
+    allowed_ops = scope.get("ops") or []
+    if allowed_ops and normalized_op not in allowed_ops:
+        raise GovernanceError(4, "operation is outside the mandate")
 
     reservation = reserve(project, agent, grant_chain, calls,
                           request_id or _new_id("CALL"), normalized_op)
@@ -1946,6 +1964,15 @@ def command_resume(project, args):
     phase = value.get("phase")
     if phase not in phases:
         raise GovernanceError(3, "checkpoint phase is invalid")
+    if args.check:
+        current_open = sorted(row["id"] for row in _open_requests(project))
+        recorded_open = sorted(value.get("open_requests") or [])
+        if current_open != recorded_open:
+            raise GovernanceError(3, "checkpoint open requests changed; add a new checkpoint")
+        usage = read_jsonl(_path(project, USAGE))
+        current_last = usage[-1].get("request_id") if usage else None
+        if current_last != value.get("last_call"):
+            raise GovernanceError(3, "checkpoint call state changed; add a new checkpoint")
     index = phases.index(phase) + 1
     next_phase = phases[index] if index < len(phases) else "done"
     return {"message": "resume at %s" % next_phase, "next_phase": next_phase,

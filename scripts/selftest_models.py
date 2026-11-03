@@ -2691,6 +2691,13 @@ def governance_cases(env, work):
                                os.path.join(gov, "scripts", "r.py"),
                                "--model", "codex:auto", "--json"])
     check("governance: a rejected direction blocks its key", code == 4, out + err)
+    code, out, err = auth_run(["decide", "--kind", "implementation", "--subject", "cache",
+                               "--topic", "cache again", "--proposal", "dict",
+                               "--decision", "accept", "--by", "agent", "--level", "L3",
+                               "--direction-key", "direction:cache",
+                               "--supersedes", "D-not-a-decision", "--reason", "try"])
+    check("governance: an L3/agent decision cannot supersede a rejection", code == 4,
+          out + err)
 
     code, out, err = auth_run(["grant", "--to", "lead", "--ops", "produce,write",
                                "--paths", "scripts/", "--models", "codex:*",
@@ -2856,6 +2863,19 @@ def governance_cases(env, work):
                                       change=None, work_package=None)
     check("governance: run_gpt refuses a produce call with no WP or change",
           isinstance(problem, str) and problem.startswith("authority (2)"), str(problem))
+    saved = sys.modules.get("authority")
+    sys.modules["authority"] = None
+    try:
+        problem = run_gpt.authority_guard(gov, "produce",
+                                          path=os.path.join(gov, "scripts", "z.py"),
+                                          change="implementation", subject="x")
+    finally:
+        if saved is not None:
+            sys.modules["authority"] = saved
+        else:
+            sys.modules.pop("authority", None)
+    check("governance: a missing authority module fails closed when governance is enabled",
+          isinstance(problem, str) and problem.startswith("authority (3)"), str(problem))
 
 
 if __name__ == "__main__":

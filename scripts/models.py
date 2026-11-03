@@ -40,6 +40,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 
 import model_config as cfg_mod  # noqa: E402
+import gate_common as common  # noqa: E402
 import model_http  # noqa: E402
 import model_registry as registry  # noqa: E402
 import model_route  # noqa: E402
@@ -1490,11 +1491,39 @@ def _authority_model_guard(project, entry):
     try:
         import authority  # noqa: PLC0415
     except ImportError:
+        markers = common.governance_markers(project)
+        if markers.get("enabled") or markers.get("any_file"):
+            return 3, "authority (3): governance is enabled but authority.py is unavailable"
         return 0, None
     code, info = authority.guard(project, "model-use", model=entry["id"], calls=1)
     if code == 0:
         return 0, None
     return code, f"authority ({code}): {info.get('reason') or info.get('message')}"
+
+
+def _authority_semantic_guard(args, entry, project):
+    """One semantic guard (review/produce) before an HTTP credential or network call."""
+    try:
+        import authority  # noqa: PLC0415
+    except ImportError:
+        markers = common.governance_markers(project)
+        if markers.get("enabled") or markers.get("any_file"):
+            return 3, "authority (3): governance is enabled but authority.py is unavailable"
+        return 0, None
+    role = getattr(args, "role", None)
+    if role in ("review", "plan-review"):
+        code, info = authority.guard(project, "review", model=entry["id"])
+    else:
+        code, info = authority.guard(
+            project, "produce", model=entry["id"],
+            work_package=getattr(args, "work_package", None),
+            change=getattr(args, "change", None),
+            subject=getattr(args, "subject", None),
+            path=getattr(args, "produce_artifact", None))
+    if code == 0:
+        return 0, None
+    return code, f"authority ({code}): {info.get('reason') or info.get('message')}"
+
 
 
 def _http_call(args, entry, prompt, cfg, project, request_id, attempts):
@@ -1513,7 +1542,7 @@ def _http_call(args, entry, prompt, cfg, project, request_id, attempts):
         reason = f"cooling down for {cfg_mod.seconds_to_text(cooling)}"
         attempts.append({"model": entry["id"], "outcome": "skipped", "reason": reason})
         return 3, None, reason
-    gcode, greason = _authority_model_guard(project, entry)
+    gcode, greason = _authority_semantic_guard(args, entry, project)
     if gcode:
         attempts.append({"model": entry["id"], "outcome": "denied", "reason": greason})
         return gcode, None, greason
@@ -1528,11 +1557,12 @@ def _http_call(args, entry, prompt, cfg, project, request_id, attempts):
     secrets = [key] if key else []
     last_error = None
     for attempt in range(1, max(0, retries) + 2):
-        gcode, greason = _authority_model_guard(project, entry)
-        if gcode:
-            attempts.append({"model": entry["id"], "outcome": "denied", "reason": greason,
-                             "attempt": attempt})
-            return gcode, None, greason
+        if attempt > 1:
+            gcode, greason = _authority_model_guard(project, entry)
+            if gcode:
+                attempts.append({"model": entry["id"], "outcome": "denied",
+                                 "reason": greason, "attempt": attempt})
+                return gcode, None, greason
         cfg_mod.mutate(project, lambda s: cfg_mod.bump_usage(s, pid, calls=1))
         started = time.time()
         try:
@@ -2408,6 +2438,8 @@ def build_parser():
     p.add_argument("--milestone")
     p.add_argument("--work-package", dest="work_package")
     p.add_argument("--produce-artifact", dest="produce_artifact")
+    p.add_argument("--change", help="declared change kind for a governed production call")
+    p.add_argument("--subject", help="decision subject for a declared change")
     p.add_argument("--why-unclosed", dest="why_unclosed")
     p.add_argument("--budget-change", dest="budget_change")
     p.add_argument("--schema")
@@ -2476,6 +2508,10 @@ def _admin_guard(args):
         import authority  # noqa: PLC0415
         code, info = authority.guard(project_of(args), op, subject=subject)
     except ImportError:
+        markers = common.governance_markers(project_of(args))
+        if markers.get("enabled") or markers.get("any_file"):
+            return fail("authority (3): governance is enabled but authority.py is "
+                        "unavailable", 3)
         return 0
     if code != 0:
         return fail(f"authority ({code}): {info.get('reason') or info.get('message')}", code)

@@ -62,6 +62,10 @@ def _authority_guard(project, op, **kwargs):
     try:
         import authority  # noqa: PLC0415
     except ImportError:
+        markers = common.governance_markers(project)
+        if markers.get("enabled") or markers.get("any_file"):
+            return 3, {"message": "authority (3): governance is enabled but authority.py "
+                                  "is unavailable"}
         return 0, {}
     code, info = authority.guard(project, op, **kwargs)
     if code == 0:
@@ -239,8 +243,13 @@ def adopt(project, request_id, decision, reason):
         return 2, {"message": "decision must be adopted / rejected / pending"}
     if not reason.strip():
         return 2, {"message": "adopt needs --reason"}
-    if not common.find_attempt(project, request_id):
+    attempt = common.find_attempt(project, request_id)
+    if not attempt:
         return 2, {"message": f"no call record for {request_id}"}
+    authority = attempt.get("authority") or {}
+    if authority.get("scope_violation"):
+        return 4, {"message": "the call wrote outside its declared work package: "
+                               + ", ".join(authority["scope_violation"][:8])}
     common.append_event(project, "adopt", request_id=request_id, reason=reason,
                         after=decision)
     return 0, {"request_id": request_id, "decision": decision,

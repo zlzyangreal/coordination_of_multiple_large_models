@@ -197,6 +197,11 @@ def main():
                 gcode, ginfo = authority.guard(os.getcwd(), "budget-change",
                                                subject="facts")
             except ImportError:
+                markers = common.governance_markers(os.getcwd())
+                if markers.get("enabled") or markers.get("any_file"):
+                    print("[FAIL] governance is enabled but scripts/authority.py is "
+                          "unavailable", file=sys.stderr)
+                    return 3
                 gcode, ginfo = 0, {}
             if gcode != 0:
                 print(f"[FAIL] authority ({gcode}): "

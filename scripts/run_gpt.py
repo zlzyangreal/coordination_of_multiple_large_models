@@ -315,10 +315,14 @@ def plan_guard(project):
 
 
 def authority_guard(project, role, **kwargs):
-    """Consult the governance guard; absent module or disabled mandate is a no-op."""
+    """Consult the governance guard; absent module is a no-op only when never enabled."""
     try:
         import authority  # noqa: PLC0415
     except ImportError:
+        markers = common.governance_markers(project) if common else {}
+        if markers.get("enabled") or markers.get("any_file"):
+            return ("authority (3): governance is enabled but scripts/authority.py is "
+                    "unavailable; protected operations stay stopped")
         return None
     op = "review" if role in REVIEW_ROLES else ("plan" if role == "plan" else "produce")
     code, info = authority.guard(project, op, **kwargs)
@@ -603,11 +607,16 @@ def main():
                                  f"{head_before}..HEAD") or ""
         changed.update(item.strip() for item in diff.splitlines() if item.strip())
         target = os.path.normcase(os.path.abspath(args.produce_artifact))
-        target_dir = target if os.path.isdir(target) else os.path.dirname(target)
+        is_dir = os.path.isdir(args.produce_artifact) or str(args.produce_artifact).endswith(
+            ("/", "\\"))
+        target_dir = target.rstrip("\\/")
         for relative in sorted(changed):
             full = os.path.normcase(os.path.abspath(os.path.join(cwd, relative)))
-            if full != target and not full.startswith(target_dir + os.sep):
-                scope_violation.append(relative)
+            if full == target:
+                continue
+            if is_dir and full.startswith(target_dir + os.sep):
+                continue
+            scope_violation.append(relative)
 
     status = "ok"
     if info["timed_out"]:

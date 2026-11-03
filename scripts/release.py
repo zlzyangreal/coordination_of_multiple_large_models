@@ -33,6 +33,7 @@ if hasattr(sys.stdout, "reconfigure"):
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 import check_docs  # noqa: E402
+import gate_common as common  # noqa: E402
 
 SKILL = "SKILL.md"
 README = "README.md"
@@ -317,6 +318,11 @@ def main():
             import authority  # noqa: PLC0415
             gcode, ginfo = authority.guard(root, "release", subject=args.version)
         except ImportError:
+            markers = common.governance_markers(root)
+            if markers.get("enabled") or markers.get("any_file"):
+                print("[FAIL] governance is enabled but scripts/authority.py is "
+                      "unavailable", file=sys.stderr)
+                return 4
             gcode, ginfo = 0, {}
         if gcode != 0:
             print(f"[FAIL] authority ({gcode}): "
@@ -326,6 +332,11 @@ def main():
             try:
                 gcode, ginfo = authority.guard(root, "push", subject=args.version)
             except ImportError:
+                markers = common.governance_markers(root)
+                if markers.get("enabled") or markers.get("any_file"):
+                    print("[FAIL] governance is enabled but scripts/authority.py is "
+                          "unavailable", file=sys.stderr)
+                    return 4
                 gcode, ginfo = 0, {}
             if gcode != 0:
                 print(f"[FAIL] authority ({gcode}): "
@@ -430,6 +441,11 @@ def main():
             import authority  # noqa: PLC0415
             gcode, ginfo = authority.guard(root, "push", subject=args.version)
         except ImportError:
+            markers = common.governance_markers(root)
+            if markers.get("enabled") or markers.get("any_file"):
+                print("[FAIL] governance is enabled but scripts/authority.py is "
+                      "unavailable", file=sys.stderr)
+                return 4
             gcode, ginfo = 0, {}
         if gcode != 0:
             print(f"[FAIL] authority ({gcode}): "

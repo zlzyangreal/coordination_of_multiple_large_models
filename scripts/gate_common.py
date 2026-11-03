@@ -178,6 +178,20 @@ def identity_mismatches(pin, root="."):
     return problems
 
 
+def governance_markers(root="."):
+    """Cheap enablement probe used when the authority module cannot be imported.
+
+    A sentinel, a governance directory, or an enabled pin marker means governance was
+    enabled; an import failure in that state must be fail-closed, not "disabled".
+    """
+    gov_dir = os.path.join(root, "_work", "governance")
+    sentinel = os.path.isfile(os.path.join(gov_dir, "ENABLED"))
+    pin = load_pin(root) or {}
+    pin_marker = bool((pin.get("governance") or {}).get("enabled"))
+    return {"sentinel": sentinel, "pin": pin_marker,
+            "any_file": os.path.isdir(gov_dir), "enabled": sentinel or pin_marker}
+
+
 # --------------------------------------------------------------------------- iteration identity
 ITERATION = os.path.join("_work", "iteration")
 ITERATION_MANIFEST = os.path.join(ITERATION, "iteration.json")
