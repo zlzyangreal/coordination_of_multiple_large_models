@@ -27,7 +27,22 @@
 
 ### 2.0.0 多平台模型接入
 
-免费模型、API Key、自定义地址、本地服务、账号令牌统一管理；新增 `models.py` 与内置 76 家提供商注册表；任务团队先 `team scan`，经用户同意才入队。GPT 仍只走 `run_gpt.py`，DeepSeek 仍只走 dsh 会话。
+把“免费/免密、API Key、自定义 API 地址、本地服务、账号令牌”统一成同一套可选清单，同时保留原来的两条受保护通道：
+
+- 车道：`codex:auto`/`codex:<slug>` 只走 `run_gpt.py`；`dsh:auto`/`dsh:<slug>` 只走宿主会话；任意 HTTP 提供商走 `models.py call`；`chain:<name>` 提供 `fallback`/`round-robin`/`smart`/`pace` 降级链。
+- 新增 `models.py`：`init/providers/add/add-custom/key/account/list/discover/test/use/route/chains/call/plan/health/budget/doctor/team`，配置/凭据/状态按项目隔离在 `_work/models/`。
+- 新增 `model_registry.py`（内置 76 家提供商）、`model_config.py`（0600 凭据库、跨进程锁、脱敏）、`model_http.py`（chat/responses/messages 三线协议、失败分类）、`model_route.py`（能力/额度/健康路由、家族独立性、降级链）。
+- 凭据只显示 `hasKey` + 末四位；只读命令不执行取令牌命令；失败回退按错误类型区分（鉴权/欠费封整家，429/5xx/超时只封单模型，400/404 不回退）。
+- 受保护家族：HTTP 直连 GPT/DeepSeek 必须显式 `allowProtectedFamily: true`，不会被静默替换。
+- 团队入队：任务开始先 `team scan` 列出可用候选，用户同意后 `team add`，拒绝的 `team decline`；未入队的 HTTP 渠道默认不参与。
+
+### 1.3.1 思考强度固定
+
+思考强度不再随额度档位升降，固定按配置值运行；额度杠杆只改“谁生产、几遍、几次调用、范围”，避免最终稿因降强度而判断力变差。
+
+### 1.3.0 额度自适应
+
+新增 `quota.py` 读取 Codex 5h/7d 剩余额度，按 S/A/B/C/R/U 分档决定谁生产、GPT 做什么、如何拆调用；过期样本报 `U`，不伪造成 100%；保留 12% 视觉门保底，GPT 从“固定评审员”改为随额度生产。
 
 ## 安装与同步
 
