@@ -27,14 +27,19 @@
 
 ### 2.0.0 多平台模型接入
 
-把“免费/免密、API Key、自定义 API 地址、本地服务、账号令牌”统一成同一套可选清单，同时保留原来的两条受保护通道：
+**接入价值**：借鉴 `dsh-our-free-model` 的多渠道做法，把“免费/免密、API Key、自定义 API 地址、本地服务、账号令牌”统一成一份可选清单。此前只有 codex 与 dsh 两条通道；接入后，免费模型、本地模型、自建网关和各家的付费 API 都能进入同一套路由、验活、额度与团队审批，而 GPT/DeepSeek 两条受保护通道保持不变。
 
-- 车道：`codex:auto`/`codex:<slug>` 只走 `run_gpt.py`；`dsh:auto`/`dsh:<slug>` 只走宿主会话；任意 HTTP 提供商走 `models.py call`；`chain:<name>` 提供 `fallback`/`round-robin`/`smart`/`pace` 降级链。
-- 新增 `models.py`：`init/providers/add/add-custom/key/account/list/discover/test/use/route/chains/call/plan/health/budget/doctor/team`，配置/凭据/状态按项目隔离在 `_work/models/`。
-- 新增 `model_registry.py`（内置 76 家提供商）、`model_config.py`（0600 凭据库、跨进程锁、脱敏）、`model_http.py`（chat/responses/messages 三线协议、失败分类）、`model_route.py`（能力/额度/健康路由、家族独立性、降级链）。
-- 凭据只显示 `hasKey` + 末四位；只读命令不执行取令牌命令；失败回退按错误类型区分（鉴权/欠费封整家，429/5xx/超时只封单模型，400/404 不回退）。
-- 受保护家族：HTTP 直连 GPT/DeepSeek 必须显式 `allowProtectedFamily: true`，不会被静默替换。
-- 团队入队：任务开始先 `team scan` 列出可用候选，用户同意后 `team add`，拒绝的 `team decline`；未入队的 HTTP 渠道默认不参与。
+**接入什么模型可用**：
+
+- 免费/免密：Pollinations（无需 Key）、Ollama、LM Studio、LLaMA.cpp（本机服务）。
+- 免费额度：Gemini、Cloudflare、OpenRouter 的 `:free` 模型、NVIDIA NIM、BytePlus、Kilo 等。
+- 付费/自有 Key：DeepSeek、Kimi、Qwen、GLM、MiniMax、Mistral、Groq、Cerebras、xAI、Anthropic 等。
+- 任意 OpenAI/Anthropic/Responses 兼容端点：`add-custom` 填 base URL 即可接入。
+内置 76 家提供商，用 `models.py providers --search` 查询、`discover` 拉实时模型清单、`list` 看可用性。
+
+**受保护家族**：GPT/codex 仍只通过 `run_gpt.py`，DeepSeek/dsh 仍只通过宿主会话；HTTP 直连这两个家族必须在提供商配置里显式 `allowProtectedFamily: true`，不会被静默替换或降级。
+
+**团队**：任务开始先 `team scan`，把可用候选（配置内、本机服务、已设 Key 的平台）列给用户；同意才 `team add`，不同意 `team decline`；未入队的 HTTP 渠道默认不参与，两条受保护通道不受影响。`team.json` 存在即启用入队审批。
 
 ### 1.3.1 思考强度固定
 
