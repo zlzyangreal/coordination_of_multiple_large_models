@@ -1,16 +1,27 @@
 # 多模型协作 SKILL（中文说明）
 
-用于 **2 个及以上大模型协作** 的调度与对接：谁负责、怎么交接、评审结论怎么判断可信、出错怎么退。只管协作机制——代码、文档、数据、方案都适用；代码风格、写作、排版这些领域规则属于项目自己的事实包与 DoD，不写进这里。
+用于 **2 个及以上大模型协作** 的调度与对接：谁负责、怎么交接、评审结论怎么判断可信、出错怎么退。只管协作机制——代码、文档、数据、方案都适用；代码风格、写作、排版属于项目自己的事实包与 DoD，不写进这里。
 
 - 仓库：<https://github.com/zlzyangreal/coordination_of_multiple_large_models>
 - 版本：2.4.0（2026-11-03）
 - 当前离线自测：331 项（mock providers，不联网）
-- 本版加入**自举迭代**：用已发布的稳定版 V(N) 在独立 Git worktree 中驱动候选版 V(N+1)，复用原有方案门、评审预算、事实包、测试证据与发版检查；新增基线对比、用户验收、快照晋升、自动回退和独立回退脚本。目标是把"稳定版编排 → 候选版开发 → 证据化验证 → 人工验收 → 安全晋升 → 可回退继承"变成会拒绝、能演练的脚本链。
+- 主线：**人类定目标、硬约束、授权和验收；Agent 自主研究、规划、设计、执行；多模型独立评审；编排层在执行层拦截越权并留痕。**
 - 上一代：`多模型协作Spec.md` v2.4.1，已冻结，仅作留档
+
+## 核心能力（按版本）
+
+| 版本 | 核心添加 |
+|---|---|
+| 2.4.0 | **人类治理的决策权**：委托书、思路评估、L1/L2/L3、请求与拒绝记忆、授权与原子额度、执行层守卫、控制模式、决策链 |
+| 2.3.0 | **自举迭代**：稳定版驱动独立 worktree 候选版，commit 绑定测试证据，基线对比、用户验收、快照晋升与独立回退 |
+| 2.2.0 | **可执行门禁**：方案评审门、评审预算、测试证据、事实包版本、工作区身份、GPT 生产核算、发版检查 |
+| 2.1.0 | **规划与分发分离**：`plan` 角色独立理解需求、调研、设计并产出方案；planner 不负责分任务 |
+| 2.0.0 | **多平台模型接入**：免费/API Key/自定义地址/本地服务/账号令牌统一管理；任务团队入队审批 |
+| 1.x | 调用与契约基础：统一 `run_gpt.py`、零写盘评审、schema/信封、事实包、额度自适应 |
 
 ## 安装
 
-本机已装：把 skill 目录以 junction 挂进 DSH 的技能目录。
+把 skill 目录以 junction 挂进 DSH 的技能目录：
 
 ```powershell
 New-Item -ItemType Junction `
@@ -18,8 +29,7 @@ New-Item -ItemType Junction `
   -Target "D:\deepseek_workspace\coordination_of_multiple_large_models"
 ```
 
-- 挂完需要**重启 DSH** 才会重新扫描技能目录。
-- 若重启后仍不识别，说明技能清单是打包在 `app.asar` 里的，目录挂载不会生效；此时按普通文件夹使用（需要时直接读 SKILL.md），或挂到 `~/.codex/skills` 给 Codex 侧用。
+- 挂完需要**重启 DSH** 重新扫描技能目录；不识别时可按普通文件夹使用，或挂到 `~/.codex/skills` 给 Codex 侧。
 - 其他 Agent：把整个目录放进它的 skills 目录即可，`SKILL.md` 是入口。
 
 ## 同步
@@ -27,401 +37,75 @@ New-Item -ItemType Junction `
 ```powershell
 cd D:\deepseek_workspace\coordination_of_multiple_large_models
 git pull --rebase
-# 改完
 git add -A
 git commit -m "docs: ..."
 git push
 ```
 
-- 本机仓库已设 `http.proxy = http://127.0.0.1:7897`（Clash Verge 混合端口）。
-- Clash 没开或端口变了，先 `git config --unset http.proxy` 或改成实际端口，否则 push 会卡住。
-- 换机器：`git clone https://github.com/zlzyangreal/coordination_of_multiple_large_models.git`，再按上面的安装步骤挂载。
+- 本机仓库已设 `http.proxy = http://127.0.0.1:7897`（Clash Verge 混合端口）；Clash 没开或端口变了，先 `git config --unset http.proxy` 或改成实际端口。
+- 换机器：`git clone https://github.com/zlzyangreal/coordination_of_multiple_large_models.git`，再按安装步骤挂载。
 
 ## 目录
 
-```
-coordination_of_multiple_large_models/
-├── README.md            本文件（给人看）
-├── SKILL.md             入口：何时用、38 条硬规则、8 步流程（英文，给 Agent 读）
-├── references/
-│   ├── environment.md           环境检查、工具链、网络三查/Clash、权限、工作区身份
-│   ├── model-access.md          模型接入：三条车道、凭据、发现/验活、路由、故障与回退、边界
-│   ├── model-registry.md        模型登记与验活、路由、额度分档摘要
-│   ├── quota-routing.md         5h/7d 额度读取、分档、节奏、保底、成本校准、评审预算
-│   ├── calling-gpt.md           调用入口、角色、评审调用、可观测性、.ps1 编码、中断收尾
-│   ├── execution-and-gates.md   任务契约、任务板、事实包版本、8 步流程、DoD、回归
-│   ├── handoff-protocol.md      零写盘评审、信封、结果 schema、测试证据、方案评审门、复核门
-│   ├── iteration-bootstrap.md   稳定版→候选版自举：双工作区、基线对比、验收、晋升与回退演练
-│   ├── governance.md            人类治理的决策权：委托书、思路评估、L1/L2/L3、请求、授权、守卫、记录
-│   └── failure-and-artifacts.md 失败矩阵、快照与恢复、清理、上报
-├── scripts/
-│   ├── check_env.py             一键环境自检（codex 路径/版本、进程、代理、可写、实时额度、pin 身份）
-│   ├── session.py               契约 + 根身份锚点：pin / check / status / identity / note
-│   ├── run_gpt.py               唯一 GPT 调用入口：角色、计划门、预算、facts 重哈希、schema 校验、台账
-│   ├── authority.py             人类治理决策权：mandate / intake / classify / request / grant / guard / mode / report
-│   ├── plan_gate.py             方案评审门：hash/mtime、信封、结果、调用记录、家族独立性、未闭环 challenge
-│   ├── review_budget.py         评审轮次/分钟预算、原子预留、生产采纳、交付门
-│   ├── facts_pack.py            事实包版本/哈希：freeze / bump / check / show / set-budget
-│   ├── test_evidence.py         记录测试命令、退出码、日志与哈希，供评审信封引用
-│   ├── check_docs.py            版本/计数/触发词/规则号/旧路径/脚本/资产一致性
-│   ├── release.py               一条命令：检查 → 真实测试计数 → changelog → commit/tag/push
-│   ├── gate_common.py           门禁共享库：证据归一、家族解析、facts 哈希、事件日志
-│   ├── models.py                多平台模型接入 CLI：init/providers/add/key/account/list/discover/test/
-│   │                            use/route/chains/call/plan/health/budget/doctor
-│   ├── model_registry.py        内置 76 家提供商注册表 + provider/model 语法、端点、请求头
-│   ├── model_config.py          项目级配置/凭据存储（0600）/运行状态/掩码与脱敏/跨进程锁
-│   ├── model_http.py            三种线协议（chat/responses/messages）、列表探测、失败分类
-│   ├── model_route.py           模型清单、能力/额度/健康路由、家族独立性、降级链
-│   ├── quota.py                 实时额度（app-server）→ 档位 S/A/B/C/R/U → 分工与调用方式
-│   ├── validate_result.py       评审结果 schema + 回显 + 单元覆盖 + facts/test_refs 校验
-│   ├── schema_for_codex.py      把契约派生成 codex strict 模式的 schema（--output-schema 必须）
-│   ├── reap_turns.py            收尾卡在 inProgress 的回合（先备份、只改该状态）
-│   ├── build_envelope.py        生成请求信封（facts/evidence/units/prior_findings/schema 路径）
-│   └── selftest_models.py       模型 + 门禁离线自测（本地 mock 提供商，不花额度、不联网）
-└── assets/
-    ├── envelope.example.yaml    信封示例（零写盘 + prior_findings）
-    ├── result.schema.json        评审结果的结构约束
-    ├── call.schema.json          调用记录的结构约束
-    ├── facts-pack.example.md     事实包模板（constraints 与 budgets 分栏）
-    ├── providers.registry.json   内置提供商注册表（76 家，来自 dsh-our-free-model，MIT）
-    ├── providers.registry.NOTICE.md  数据来源与许可说明
-    ├── models.config.example.json    模型配置示例（API Key / 本地 / 自定义网关 / 账号令牌）
-    ├── mandate.example.json          委托书模板（目标、硬约束、偏好、范围、预算）
-    └── decision-record.example.json  决策记录示例（L1/L2/L3、理由、方向、绑定）
-```
+- `SKILL.md`：Agent 入口——何时用、38 条硬规则、工作流、脚本表。
+- `references/`：`environment.md`、`model-access.md`、`model-registry.md`、`quota-routing.md`、`calling-gpt.md`、`execution-and-gates.md`、`handoff-protocol.md`、`iteration-bootstrap.md`、`governance.md`、`failure-and-artifacts.md`。
+- `scripts/`：`scripts/check_env.py`、`scripts/session.py`、`scripts/run_gpt.py`、`scripts/authority.py`、`scripts/plan_gate.py`、`scripts/review_budget.py`、`scripts/facts_pack.py`、`scripts/test_evidence.py`、`scripts/check_docs.py`、`scripts/release.py`、`scripts/gate_common.py`、`scripts/models.py`、`scripts/model_registry.py`、`scripts/model_config.py`、`scripts/model_http.py`、`scripts/model_route.py`、`scripts/quota.py`、`scripts/validate_result.py`、`scripts/schema_for_codex.py`、`scripts/reap_turns.py`、`scripts/build_envelope.py`、`scripts/iteration.py`、`scripts/selftest_models.py`（完整说明见 `SKILL.md` 脚本表）。
+- `assets/`：result/call schema、facts/envelope 模板、providers 注册表、模型配置示例、mandate/decision 示例。
 
-## 模型接入与统一管理（v2.0.0 起）
+## 快速开始
 
-参考 `dsh-our-free-model` 的多渠道做法，把"免费模型、自有平台账号登录、API Key、自定义 API
-地址、本地部署"统一成**同一个可选清单**。原来的两条调用通道原样保留，且是默认值：
+1. **开工**：`session.py pin` 锁契约与工作区身份；`check_env.py --short-call` 确认出口与额度；`models.py team scan` 把可用 Agent 列给用户，确认后才 `team add`。
+2. **方案**：`models.py route --role plan` 选 planner → `models.py plan --requirements <需求>` 产出方案 → 独立 `plan-review` → `plan_gate.py check` 通过才分发。
+3. **分发**：lead 建任务板、定 owner；`facts_pack.py freeze`；范围/预算变了就 `bump`；迭代中的写操作只落在候选工作区。
+4. **生产与评审**：`run_gpt.py --role produce --work-package ...`；`build_envelope.py` + `run_gpt.py --role review`；`validate_result.py` 通过后逐条回源，采纳/拒绝写台账。
+5. **交付**：`review_budget.py deliver` + `check_docs.py --run-tests`；发版用 `release.py`，本地可加 `--no-push`。
+6. **迭代**：`iteration.py init/baseline` → 候选发版 → `evidence/compare` → 用户 `approve` → `promote`；失败 `rollback`。
 
-| 车道 | 写法 | 谁来调 | 说明 |
-|---|---|---|---|
-| GPT / codex | `codex:auto`、`codex:<slug>` | 只走 `scripts/run_gpt.py` | **受保护**：持久化、schema、额度台账都不变 |
-| DeepSeek / dsh | `dsh:auto`、`dsh:<slug>` | 宿主会话（lead 本人） | **受保护**：脚本不会另起一个 DeepSeek 调用者 |
-| 任意 HTTP 提供商 | `<provider>/<model>` | `scripts/models.py call` | 可选：免密/免费、API Key、自定义地址、本地服务、账号令牌 |
-| 降级链 | `chain:<name>` | `models.py call --chain` | 命名有序链，`fallback`/`round-robin`/`smart`/`pace` |
+## 常用命令
 
-`models.py call --model dsh:...` 会直接拒绝（exit 2）并说明原因；`models.py test codex:auto`
-委托给 `run_gpt.py --probe`。也就是说 **GPT 仍然只有 run_gpt.py 一条路，DeepSeek 仍然只走 dsh**。
-若确实要用 HTTP 直连 GPT/DeepSeek 家族的模型，必须在提供商配置里写
-`"allowProtectedFamily": true`——这是显式的第二条路，不会被静默替换。
-
-```bash
-python scripts/models.py init                 # 建 <项目>/_work/models/config.json
-python scripts/models.py providers --search deep
-python scripts/models.py add deepseek         # 内置 76 家之一
-python scripts/models.py key set deepseek     # 从 stdin 读，只回显 …末四位
-python scripts/models.py discover deepseek    # 拉实时模型清单（不花钱）
-python scripts/models.py add ollama           # 本机模型，无需凭据
-python scripts/models.py account login qoder_local   # 账号登录交给厂商 CLI，skill 不接触密码
-python scripts/models.py add-custom my_gw --base-url https://llm.internal/v1 \
-    --models internal-chat-1 --format openai-chat --auth apiKey
-python scripts/models.py list                 # 清单 + 可用性（不可用会写原因）
-python scripts/models.py test deepseek        # 验活（列表探测；--generate 才花一次生成）
-python scripts/models.py route --role plan            # 谁最适合做方案设计（推理/设计/Agentic/编程评分）
-python scripts/models.py plan --requirements req.md  # 生成可执行开发方案（不负责分发）
-python scripts/models.py use review codex:auto        # 按角色切换（项目级）
-python scripts/models.py route --role review --producer codex:auto   # 选主 + 回退链
-python scripts/models.py chains set review-safe \
-    --models codex:auto,deepseek/deepseek-v4-pro,ollama/qwen3:8b
-python scripts/models.py call --chain review-safe --prompt-file brief.md --output out.md
-python scripts/models.py team scan                    # 任务开始先扫可用 Agent，不自动加入
-python scripts/models.py team add <候选...>           # 用户同意后才入队
-python scripts/models.py team decline <候选...>       # 不同意的记下来，本任务不再使用
-python scripts/models.py account login <provider>   # 账号登录交给厂商 CLI
-python scripts/models.py health | budget | doctor
-```
-
-几条关键规则（完整版见 `references/model-access.md`）：
-
-- **配置按项目隔离**：配置/凭据/状态都在 `<项目>/_work/models/` 下，两个项目互不影响；只有
-  显式 `--scope user` 才写用户级（`~/.coord-models`）。`COORD_MODELS_HOME` 可改用户级目录。
-- **凭据优先级**：`credential`（env/file/command）> 内联 `apiKey`（会警告）> 0600 凭据库 >
-  注册表声明的环境变量。`list/route/doctor` 这类只读命令**不会执行**配置里的取令牌命令；
-  只有真正的 call/test/discover 才会执行，且用 `argv` 直接调用、不经 shell。
-- **不泄露**：终端/状态/调用日志只出现 `hasKey` 和 `…末四位`；提供商回显的报错会先按密钥脱敏，
-  失败命令的 stderr 一律不显示（登录命令失败时最可能打印令牌）。Windows 上用 icacls 收 ACL，
-  `doctor` 校验实际权限，收不紧会直接报错。
-- **可用性与回退**：按状态码判定失败类型。鉴权/欠费/权限封整家提供商；429、5xx、超时、模型不存在
-  只封该模型（同一家的其它模型仍可回退）；URL 级 404 / 400 属于请求缺陷，**不回退**，直接 exit 4。
-  重试次数有上限（`retryTransient`，0 表示只试一次），每次尝试都落 `model_calls.jsonl`。
-- **路由**：`--pin` 是精确的，用不了就 exit 3，绝不换成另一个模型；`use` 是持久化的角色切换；
-  `produce` 按额度档位决定谁生产（S/A 交给 GPT，B/C/R 由 lead 生产）；`review` 会排除生产者的
-  家族，家族不明的聚合行默认不能当独立评审（`--allow-unknown-family` 可显式承担风险）。
-- **额度与预算**：HTTP 提供商可在配置里写 `limits.callsPerDay/tokensPerDay`，`models.py budget`
-  对照本地计数；没配额度就按"未知"处理，不会当成无限。GPT 仍看 `quota.py` 的 5h/周额度。
-- **方案设计 ≠ 任务分发**：`plan` 角色按 **Reasoning / Design / Agentic / Coding** 四项评分选模型（可在 `overrides.<model>.scores` 调整），由它独立理解需求、调研技术、对比开源、设计架构、选技术栈并产出可执行方案；**它不给模型分配任务**，方案先过独立评审，再由 lead（dispatcher）拆任务、定 owner。`models.py plan --requirements req.md` 产出 `_work/plan/plan.md` 和 `planner.json`。
-- **入队要问**：任务开始先 `team scan`，把可用候选（配置内、本机服务、已设环境变量 Key 的平台）列给用户；同意才 `team add`，不同意 `team decline`。没有 `team.json` 时保持旧行为（配置了就能用）；建队后未入队的 HTTP 渠道默认不参与，dsh/codex 两条保护通道不受影响。
-- **账号登录**：`account login/status/logout/list` 把登录委托给厂商 CLI（`loginArgv`），skill 只记录登录态、登出时清掉已存令牌；调用仍用 `credential` 取令牌，不保存密码。
-- **边界**：浏览器 OAuth 登录流、以及需要动态会话 id + 专属请求头的匿名免费车道（参考项目的
-  opencode/Kilo 车道）不在本 skill 内复刻——OAuth 类在清单里标成"不可驱动"，账号登录请用
-  厂商 CLI，拿到 token 后用 `credential: {source: command|file}` 导入。本 skill 是客户端，
-  不做转发网关。
-
-### 免费成员清单（v2.0.0）
-
-下表是**可接入的免费候选**，不是"已入队"：是否加入由你确认（`team scan` → 询问 →
-`team add`）。"免费层"通常仍要注册账号/Key，只有标注"无需"的才是真正免密。
-
-| 成员 | 注册表分类 | 凭据 | 接入要点 | 备注 |
-|---|---|---|---|---|
-| Pollinations | 公网免费（非注册表） | **无需** | `add-custom` + `--chat-url https://text.pollinations.ai/openai`，模型以 `/models` 返回为准（当前 `openai-fast`） | 公网服务，稳定性和隐私策略由对方决定，勿发敏感内容 |
-| Ollama | local | **无需** | 本机 `http://127.0.0.1:11434/v1` | 启动后 `team scan` 自动发现已拉取模型 |
-| LM Studio | local | **无需** | 本机 `http://127.0.0.1:1234/v1` | 需在 LM Studio 里先加载模型 |
-| LLaMA.cpp | local | **无需** | 本机 OpenAI 兼容端口（默认探测 8080） | `llama-server` 启动后可用 |
-| BazaarLink | free-tier | 需 Key | 注册后 `models.py add bazaarlink` + `key set` | 免费额度以平台为准 |
-| BytePlus Ark | free-tier | 需 Key | `add byteplus` + `key set` | 字节系，区域/额度以平台为准 |
-| Cloudflare | free-tier | 需 Key | `add cloudflare` + `key set` | Workers AI / AI Gateway |
-| Gemini | free-tier | 需 Key | `add gemini` + `key set` | OAuth 登录需另导入令牌 |
-| Kilo.ai | free-tier | 需 Key | `add kilo` + `key set` | 免费池，上游会声明 prompt 可能被记录 |
-| Kimchi | free-tier | 需 Key | `add kimchi` + `key set` | 免费额度以平台为准 |
-| NVIDIA NIM | free-tier | 需 Key | `add nvidia_nim` + `key set` | 开发者计划免费额度 |
-| Ollama Cloud | free-tier | 需 Key | `add ollama_cloud` + `key set` | 云端服务，非本机 |
-| OpenRouter | free-tier | 需 Key | `add open_router` + `key set` | 选择带 `:free` 的模型 |
-| OpenCode Zen | free-tier | 需 Key，但**默认接不通** | — | 需要动态会话 id + 专属请求头，按普通 API Key 接入会失败；请用参考项目的插件 |
-
-> 另有 60+ 家自带 Key 的平台（DeepSeek 官方 API、Kimi、Qwen、GLM、MiniMax、Mistral、
-> Groq、Cerebras、SambaNova、SiliconFlow、Together、Fireworks、Nebius、xAI 等）在
-> `assets/providers.registry.json`，用 `python scripts/models.py providers --search <名字>`
-> 查询。任何一家都需要先配置 Key、再 `team scan` 让你确认后才会参与调用。
-
-### Claude / Anthropic（付费，非免费）
-
-Claude 走 Anthropic 官方 API，注册表内置 `anthropic` 提供商（`anthropic-messages` 协议）；
-它不是免费成员，按量计费。模型名以 Anthropic 当前可用 id 为准，注册表内置的示例：
-
-| 模型名称（id） | 协议 | 说明 |
-|---|---|---|
-| `claude-sonnet-4-20250514` | `anthropic-messages` | Sonnet，日常生产/评审首选 |
-| `claude-opus-4-20250514` | `anthropic-messages` | Opus，更贵、推理更强 |
-| `claude-3-5-sonnet-20241022` | `anthropic-messages` | 旧版 Sonnet，兼容保留 |
-
-```powershell
-python scripts/models.py add anthropic --models claude-sonnet-4-20250514
-python scripts/models.py key set anthropic          # 或设 ANTHROPIC_API_KEY
-python scripts/models.py test anthropic --generate  # 可选：花一次很小的生成验活
-python scripts/models.py team scan
-python scripts/models.py team add anthropic/claude-sonnet-4-20250514 --allow-unverified
-```
-
-- **必须带 `--allow-unverified`**：Anthropic 没有模型列表接口，`team add` 无法用列表验证；
-  入队后第一次成功调用会把健康状态标成 `ok`。
-- Claude 属于 anthropic 家族，与 GPT/DeepSeek 不同族，可当独立评审：`python scripts/models.py use review anthropic/claude-sonnet-4-20250514`。
-- 只有 OpenRouter Key 时：`add open_router --models anthropic/claude-sonnet-4`，再 `team add open_router/anthropic/claude-sonnet-4 --allow-unverified`。
-- Claude Pro/Max 订阅（Claude Code 登录）没有内置 OAuth；需要手工把令牌通过 `credential` +
-  自定义 `headers` 导入并自行维护刷新。Bedrock/Vertex 上的 Claude 默认不在注册表内，
-  Vertex 的 ADC 认证不可驱动。
-
-离线自测（不联网、不花钱）：`python scripts/selftest_models.py`，覆盖三线协议、429 回退、
-400 不回退、凭据脱敏、模型级冷却、精确 pin、家族独立性、跨进程状态锁、受保护家族直连拦截、
-凭据命令延迟执行、codex 委托的 cwd 与空响应等 155 项。
-
-补充两条容易踩的边界：HTTP 提供商配置好即可用于普通调用，但**未验证（没跑过 `test` 或成功
-调用）时不会进入 `review` 角色**——评审门不做"尽力而为"；`add`/`use`/`remove` 会写
-`_work/models/model_changes.log`，换模型有据可查。
-
-## 额度自适应（v1.3.0 起）
-
-GPT 的额度是**按 5 小时窗口发、到期作废**的。旧版把 GPT 固定当评审员，窗口内经常大量额度空转——这才是"利用率低"的根因，不是评审不够多。
-
-开工先读额度，分工跟着档位走：
-
-```bash
-python scripts/quota.py                # 实时值（app-server），失败自动回退会话日志
-python scripts/quota.py --source log   # 只看历史样本（不启动 app-server）
-python scripts/quota.py --json         # 给脚本/Agent 用
-python scripts/quota.py --remaining 62 --minutes 210   # 读不到时手动给
-python scripts/quota.py --note "交稿前"                  # 往 _work/quota_ledger.md 记一行
-```
-
-实时值走 `codex app-server` 的 `account/rateLimits/read`，约 2.5 秒，能看到**所有客户端**的消耗；历史样本只在"仍属于当前窗口"时有效，窗口一旦过期就报 `U`（unknown）而不是 100%。
-
-| 档 | 5h 剩余 | 谁生产 | GPT 做什么 | 调用 |
-|---|---|---|---|---|
-| **S** 富余 | ≥65% | lead 整合、跑脚本、交付 | 生产 + 全部评审门 + 额外二遍 | 按件拆 |
-| **A** 正常 | 50–65% | lead 做确定性部分 | 质量敏感部分生产 + 全部评审门 | 按组一次 |
-| **B** 收敛 | 30–50% | lead 全包生产 | 只做门，批量 | 页面/文件合并成一次 |
-| **C** 仅多模态 | 12–30% | lead 全包文字/代码/格式 | 只看图、看版式 | 所有图合并一次 |
-| **R** 保底 | <12% | lead 全包 | 最多一次交付视觉门 | 一次即停 |
-
-**思考强度固定不动。** 按 `~/.codex/config.toml` 的配置跑（现在 `medium`），档位只改"谁生产、几遍、几次调用、看多少页"，不改 effort。降强度会让判断力在最终稿最关键的时候变差（收敛档恰恰最不能出错）；反过来用超高强度烧富余额度也不划算——两个不同范围的普通遍比一遍 `xhigh` 更有用，而且前后强度不同，评审结论不可比。唯一例外：R 档且门必须跑，这一次降一档并记进 ledger。
-
-基准三档（≥50% 由 GPT 主生产、30–50% 减负、<30% 只做多模态）保留，另加三处修正：
-
-1. **看"每小时可用点数"，不只看百分比。** 同样是 40%，离重置还有 30 分钟就该烧掉，还有 4 小时就该省着用。所以加了两个覆盖：`≤1h 且 ≥15%` → 直接按 S 花掉（过期作废）；`≥2h` 时按 `剩余/小时` 的节奏，≥18 上调一档、<8 下调一档（最多降到 C，不会跳过视觉门）。脚本每次都会把 pace 打出来。
-2. **7 天周额度有否决权。** 5h 满格但周额度只剩 20% 时按 B 跑，<12% 时按 C 跑——只盯 5h 会在一周后突然断粮。
-3. **保底线放在 12%，不是 30%。** "30% 以下只做多模态"在多数场景成立，但交付前那段刚好落在 30% 时会直接没有视觉门（只有 GPT 看得见版式）。B 档（生产归 lead、评审归 GPT、批量、只做门）比一刀砍更平滑；真正的保底是 8–12%，只留给交付前那一次视觉门。文审可以等重置，视觉门不能。
-
-另外三条配套规则，解决"额度有了但没活干"：
-
-- **S/A 档 GPT 是生产者，不是评审员。** 固定分工本身就是浪费；档位高时把"质量差最大"的活推给它（成稿、论证结构、需求解读、方案批评），机械活（改名、重排、批量替换、脚本）永远归 lead——那不是利用率，是浪费外加更多错。
-- **空转也要有清单。** 队列里的增值项按优先级排：门 → 生产 → 对抗性二遍（换范围，不是重复第一遍）→ 跨文件一致性/数字复算 → 逐图视觉审计/备选方案 → 机械活（永不）。S 档或临重置时优先烧前三项；队列空了就写"无有价值任务"，不许为了烧而烧。
-- **记单价。** 每次调用前后各 `--note` 一次，三次就有"一次评审≈6 点"这类单价，之后按百分比排期而不是凭感觉。目标：有 backlog 时每个窗口用到 **70–90%**；>92% 太冒险（门做不了），<50% 且有 backlog 算浪费，要写进复盘。
-
-代价：`codex exec` 每次调用有固定开销（实测一次上下文很小的 `ok` 调用也要 1–3% 的窗口额度），所以 B/C 档必须批量（多页、多文件合并成一次调用），S 档才按件拆分换质量。
-
-## 调用入口与可观测性（v1.4.0）
-
-2026-10-24 的缺陷反馈单暴露了一条链路矛盾：**探针的写法被抄成了生产写法**。`codex exec --ephemeral` 不写 rollout、不留会话，于是额度脚本永远只读得到旧样本；旧样本窗口过期后又按 5 小时外推成 100%，上层据此判 S 档放量——而同一分钟实时值已经是已用 11%。下游 4 个调用脚本全部沿用 `--ephemeral`，其中 2 个写死了已失效的 `bin/<hash>/codex.exe`，1 个 `.ps1` 无 BOM 直接语法错。
-
-修法三件事：
-
-1. **额度读实时源。** `codex app-server` 的 `account/rateLimits/read`（约 2.5 秒）优先，会话日志只作兜底；**过期样本一律 `U`（unknown）**，脚本再也不会把旧样本外推成 100%。`U` 档按 R 档规划，先拿到读数再批量。
-2. **所有生产/评审调用走 `scripts/run_gpt.py`。** 默认持久化（不传 `--ephemeral`），运行时解析 codex 路径，显式传 model + effort，超时自动收尾，并把每次调用写成 `_work/calls/<request_id>.json`：`thread_id`、`rollout_path`、模型/强度/沙箱、起止时间、token 用量、调用前后额度与差值。`--probe` 才是 ephemeral，只用于连通性。
-3. **卡住的回合要收尾。** 被强杀/超时的回合会在 `thread_history` 里永远 `inProgress`，桌面端一直显示"正在处理"。runner 超时后会把该回合标成 `interrupted`；历史遗留用 `python scripts/reap_turns.py --older-than 30`（先 dry-run，`--apply` 前自动备份，只改 `inProgress` 行）。
-
-两条硬约束：
-
-- 生成的 `.ps1` 必须是 **UTF-8 with BOM**（或纯 ASCII），否则 PowerShell 5.1 把中文按 ANSI 解析，报的却是无关的 `{` 语法错；能用 `.py` 就别生成 `.ps1`。
-- 不经过 `codex exec` 的调用（直连 API、别的编排层）本来就不产生 rollout，不在额度读取范围内——报告里要写明这条边界，别当成"监控坏了"。
-
-## 契约与门（v1.5.0 起）
-
-第二份反馈单（对 v1.4.0，9 条）指出：脚本能调用了，但"谁负责版本、结果落哪、证据怎么绑、谁不能审谁"四个断点没闭合。这版把每个断点落到一个执行点：
-
-| 断点 | 规则 |
+| 场景 | 命令 |
 |---|---|
-| 只读评审却要求写 `result_path`（必然失败） | 评审**零写盘**：结果作为最终消息由 `run_gpt.py --output` 捕获，lead 校验后复制到 `result_path`。信封拆成 `artifact_access: read-only` + `result_capture: runner`；`read-only + direct` 在构建期直接报错 |
-| 契约会话中途被替换，无人察觉 | 开工 `session.py pin`，每轮只比对不重读；变了记一行偏差、**继续按旧版执行**；交付写明"pinned vX / 仓库 vY" |
-| `--schema` 是死的，11/11 条 finding 缺字段全放行 | 评审调用强制 `--schema assets/result.schema.json`；runner 收完即校验（回显 mtime、单元覆盖、必填字段），不合规 exit 3。另有 `validate_result.py` 兜住非 runner 来源。删掉"缺 `severity_basis` 按 medium"的旧兜底。**注意**：codex 的 `--output-schema` 走 strict 模式（每个对象要 `additionalProperties: false`、所有字段 must-required），手写契约直接喂会 400，runner 会自动派生 `<request_id>.codex-schema.json` 再交给 codex |
-| 被拒条目跨轮重复提 | 信封必填 `prior_findings`，由 `build_envelope.py --ledger` 从台账自动生成；缺 `--ledger` 构建失败 |
-| 事实包把"规模上限"当硬约束审（页数、行数、PR 大小都是预算） | 事实包拆 `constraints`（违反即返工）与 `budgets`（超限只报 `notice`，不得作否决理由）；模板 `assets/facts-pack.example.md` |
-| 同一模型的草稿由它自己放行 | advisory draft 计入生产：对应 finding 标 `origin: advisory-derived`，不计入独立评审；只有单模型可用时，交付必须写"本轮评审非独立（同源）" |
-| 额度读取与台账没有执行点 | "一次 runner 调用 = 一批"；runner 每次自动写一行 `_work/quota_ledger.md`；每条用户消息读一次 live 额度 |
-| SKILL 可在会话内静默失效 | 每轮首行状态行：`SKILL v2.2.0 (pinned 22:54, D:) \| quota 5h 78% / week 96% \| 阶段：…`；中断当场声明并补门；复盘固定问"本轮 skill 是否中断" |
-| 证据没绑定到实际被读的东西 | 评审实际读的派生件（diff / dump / 导出）在调用前立即生成，`build_envelope.py --review-input` 把 sha256(8)+mtime 记进 `_work/rounds.md`；未记录前交付不得声称"版本已绑定"（信封结构按决议暂不动） |
+| 环境与身份 | `check_env.py --short-call`、`session.py pin\|check\|status` |
+| 模型接入 | `models.py init/providers/add/key/account/list/discover/test/route/chains/call/plan/team` |
+| 额度 | `quota.py`（5h/7d 剩余、档位 S/A/B/C/R/U） |
+| 方案与评审 | `plan_gate.py check`、`build_envelope.py`、`run_gpt.py --role plan-review\|review`、`validate_result.py` |
+| 预算与证据 | `review_budget.py`、`test_evidence.py`、`facts_pack.py` |
+| 迭代 | `iteration.py init/baseline/evidence/compare/approve/promote/rollback` |
+| 决策权 | `authority.py init/intake/classify/request/grant/guard/mode/report` |
+| 发版 | `check_docs.py --run-tests`、`release.py --version X.Y.Z --note "..."` |
 
-一句话：v1.4.0 解决"怎么调用"，v1.5.0 解决"调用了算不算数"，v1.6.0 解决"换到代码/数据/方案也成立"，v2.2.0 把这些约定变成**会拒绝的脚本**。
-
-## 可执行门禁（v2.2.0 起）
+## 门禁（每个门都是退出码）
 
 | 门 | 命令 | 拒绝条件 |
 |---|---|---|
-| 方案评审门（G1） | `python scripts/plan_gate.py check --envelope _work/plan/env_plan.yaml --result _work/plan/plan.review.json` | 无评审（3）、方案改过（4）、high/medium 未闭环（5）、同族/家族不明（6）；**没有生产豁免** |
-| 评审预算（G2） | `python scripts/review_budget.py check --milestone M1` / `raise --to N` / `note-minutes` | 第 3 轮无 `--why-unclosed`（3）；超预算无 `--budget-change` 或 `raise`（4） |
-| 测试证据（C3） | `python scripts/test_evidence.py record --name tests -- python scripts/selftest_models.py` → `build_envelope.py --test-evidence ...` | 信封有证据但结果无 `test_refs`、日志哈希不符、或 observed 抄 summary（校验无效） |
-| 事实包版本（C4） | `python scripts/facts_pack.py freeze` / `bump --reason ...` / `check` | 未冻结、哈希过期（3）；信封/运行前/校验时重哈希不一致 |
-| 工作区身份（C5） | `python scripts/session.py pin` / `check` / `identity` | 路径/盘符/卷序列不符或旧 pin：exit 2，要求重新 pin；**不读另一个盘的同名 `_work`** |
-| GPT 生产与交付（C2） | `python scripts/review_budget.py adopt --request-id R --decision adopted --reason ...`；`deliver` | S/A 无 GPT 生产单元或未采纳/未落审批（5）；B/C/R/U 豁免；`probe` 永不计入 |
-| 发版一致性（C6） | `python scripts/check_docs.py --run-tests`；`python scripts/release.py --version X.Y.Z --note "..."` | 版本/计数/触发词/规则号/旧路径/未登记脚本任一不符；脏树/已存在 tag |
-| 双工作区身份（C7） | `iteration.py init` / `status` / `guard` | 候选与稳定根重叠、非同一仓库 worktree、分支不符、执行端脚本在迭代中被改（exit 3） |
-| 新旧对比（C8） | `iteration.py compare` | 证据不是当前候选 commit、测试失败或少于基线、未声明删除能力、文档不一致（exit 4） |
-| 晋升/回退（C9） | `iteration.py approve` / `release.py`（候选）/ `promote` / `rollback` | 无验收、无对比、tag 不在被测 commit、计划门失败、脏树、晋升后 smoke 失败（自动回退，exit 5） |
+| 方案评审 | `plan_gate.py check` | 无评审（3）、方案改过（4）、high/medium 未闭环（5）、同族/家族不明（6） |
+| 评审预算 | `review_budget.py check/raise` | 第 3 轮无 `--why-unclosed`（3）；超预算无 `--budget-change`/`raise`（4） |
+| 测试证据 | `validate_result.py` | 缺 `test_refs`、日志哈希不符、observed 抄 summary（1） |
+| 事实包 | `facts_pack.py check` | 未冻结/哈希过期（3）；重复头（1） |
+| 工作区身份 | `session.py check` | 路径/盘符/卷不符或旧 pin（2） |
+| 生产与交付 | `review_budget.py deliver` | S/A 无有效 GPT 生产单元或未采纳（5） |
+| 发版一致性 | `check_docs.py --run-tests`、`release.py` | 版本/计数/规则/路径/脚本/资产不一致；脏树/已有 tag（1） |
+| 迭代与晋升 | `iteration.py status/compare/promote` | 身份/隔离/执行端违规（3）；证据/对比/验收/tag/smoke 失败（4/5） |
 
-一句话：**每个门都是一个退出码，不是一段提醒。** 门禁的共享证据在 `_work/calls/`、`_work/gates/events.jsonl`、`_work/evidence/` 与事实包里。
+## 治理边界（v2.4.0）
 
-## 人类治理的决策权（v2.4.0 起）
-
-v2.3 解决"谁生产、谁评审、证据是否成立"；v2.4 增加一条会拒绝的**决策权边界**：人类定目标、硬约束、授权和最终验收；Agent 自主研究、规划、设计、选型和执行；多模型负责独立评审；编排层负责在受控路径上拦截越权、记录决策、说明无法保证的范围。
-
-- **委托书（mandate）**：目标、可交付物、硬约束、偏好、可写路径、可用模型、调用预算。只给目标也可以。
-- **思路评估（intake）**：人的初步思路是"候选方向"而不是命令；`adopt/modify/reject` 必须带评估；拒绝要有依据、可解析的证据引用和替代方案；实质方向改变走 L2。
-- **三级决策**：L1 人类（目标、硬约束、范围、权限、发版/推送/验收、无法归类的事项）；L2 协商（改变已确认方向、架构/技术栈/接口/计划变更、预算变更、目标冲突、歧义、带网络/权限/成本/许可影响的依赖）；L3 Agent（调研、计划、设计、选型、拆分、实现、测试、修复、已授权模型/插件使用）。
-- **请求与拒绝记忆**：同一事项按 `mandate_version:kind:subject` 去重；已解决的不再重复问；被拒绝的方向在显式替代决策前一直有效，不能以"小优化"回来。
-- **授权（grant）**：按操作、路径、模型、调用次数、有效期授权；子 Agent/插件只能取父授权的交集；调用在 `usage.jsonl` 里原子记账并向上逐级扣减。
-- **执行层守卫（guard）**：`run_gpt.py`（生产/评审，启动前）、`models.py`（凭据和每次重试前、模型管理命令）、`release.py`/`iteration.py`（发版、推送、晋升）、`review_budget.py`/`facts_pack.py`（预算/事实包写入）、`build_envelope.py`（把委托书写进评审信封）、`plan_gate.py`（未闭环 challenge 拦截）。拒绝返回退出码，不是提醒。
-- **控制模式**：`on/pause/resume/off`；只有用户能改；`off` 仍需 L1，且必须给 `--safe-stop` 处理未完成请求；状态缺失/损坏为 exit 3（失败关闭），不会自动降级。
-- **记录与复盘**：委托书哈希、决策链（seq/prev/hash）、请求、授权、调用预留、checkpoint、`report`（按模型/层级/类型统计接受率、拒绝方向、越权拦截）。
-
-```bash
-python scripts/authority.py init --goal "v2.4 决策权" \
-  --hard-constraint "不改 dsh/codex 受保护通道" --path scripts/,references/,assets/ \
-  --model "codex:*,dsh:*" --gpt-calls 12 --strictness normal
-python scripts/authority.py intake --summary "用 SQLite 队列" --kind idea \
-  --verdict reject --assessment "单写锁达不到 50 worker" --evidence "压测" \
-  --evidence-ref call:R... --alternative "Postgres advisory lock" --direction-key storage
-python scripts/authority.py grant --to lead --ops produce,write,review \
-  --paths scripts/,references/,assets/ --models "codex:*,dsh:*" --max-calls 12 \
-  --by user --reason "v2.4" --approval-ref _work/governance/approvals/grant.md
-python scripts/authority.py guard --op produce --work-package WP1 \
-  --path scripts/authority.py --model codex:auto --json
-python scripts/authority.py report --out _work/governance/report.md
-```
-
-**边界（不夸大）**：守卫覆盖技能自己的受控脚本路径和候选根目录的 clean-tree/提交/diff 检查；宿主工具写文件、任意 shell、以及不调用 `authority.py` 的第三方插件不在拦截范围内，依赖 DSH 沙箱/审批。`--by user` 是**声明**，不是身份认证；设置 `DSH_GOVERNANCE_SECRET` 后可校验 HMAC 审批令牌。删除全部本地标记（含 pin）也超出本地保证。语义改写同一事项无法自动识别，报告会并列相似主题供评审检查。P0-2/P0-7/P0-8/P0-9/P0-10/P1-13/P1-14/P2-16/P2-17 因此标为"部分实现"，详见 `references/governance.md` 的需求矩阵。
-
-## 自举迭代（v2.3.0 起）
-
-"用老版本开发新版本"不是一句流程约定，而是一条会拒绝的链：**已发布且验收过的 V(N) 保持为执行端**，
-V(N+1) 在独立 Git worktree 中开发；稳定版负责方案、评审、路由和验收记录，候选版只写自己的根目录；
-通过基线对比与用户验收后才晋升，失败则恢复 V(N)。
-
-```bash
-# 1. 在稳定工作区（干净、HEAD 是已发布 tag）初始化迭代
-python scripts/iteration.py init --candidate ../repo-candidate --stable v2.2.0
-python scripts/session.py pin                  # 状态行从此显示 stable -> candidate 两行
-
-# 2. 记录基线（稳定端，未受候选影响）
-python scripts/iteration.py baseline           # 默认跑 scripts/selftest_models.py
-
-# 3. 候选端开发并提交；生产调用必须 --cd <candidate>
-python scripts/run_gpt.py --cd ../repo-candidate --role produce --work-package WP1 ...
-
-# 4. 候选端发版（只改 SKILL/README，测试在 release commit 上重跑并绑定证据）
-#    在候选工作区内执行：
-python scripts/release.py --version 2.3.0 --note "..." --no-push
-
-# 5. 回到稳定端：在候选 release commit 上重录证据，再对比 + 用户验收
-python scripts/iteration.py evidence           # 稳定端脚本，证据绑定 release commit
-python scripts/iteration.py compare
-python scripts/iteration.py approve --by <用户> --note "验收结论"
-
-# 6. 稳定端晋升或回退
-python scripts/iteration.py promote            # 计划门 + 快照 + ff + smoke；失败自动恢复
-python scripts/iteration.py rollback --yes     # 也可运行生成的独立回退脚本
-```
-
-- **双身份**：`_work/iteration/iteration.json` 记录 stable 的 tag/commit/能力/配置/工具快照，以及
-  candidate 的根、分支和 base commit；候选端只有一份单向的 `candidate.json`。`guard` 按路径判定归属，
-  跨工作区写入直接拒绝。
-- **执行端冻结**：初始化后改动稳定端 `SKILL.md`、脚本或模型配置会让 `status`/`compare` 失败；候选端
-  的修改不会热切换稳定端正在执行的调用。`run_gpt.py --role produce` 在稳定根目录会被拒绝。
-- **证据绑定 commit**：`test_evidence.py` 记录 `git_head`/`git_head_after`、脏标记、工作区根/卷和
-  迭代角色；证据必须由稳定端 `iteration.py evidence` 录制并写入 manifest，`compare` 只接受这条记录，
-  候选自己写的 JSON 不算证据；脏树、跑测试时 HEAD 变化或旧 commit 的证据都会被拒。
-- **对比报告**：`_work/iteration/comparison.json` + `.md` 记录测试数变化、耗时、能力增删、文档门、
-  调用成功率；成本/资源无数据时标 `unknown`。删能力或减少测试必须显式接受并写理由。
-- **决策留痕**：重大分歧用 `iteration.py decide --topic ... --decision ... --by <用户>` 写入
-  `_work/iteration/decisions.jsonl`（含候选 commit 与理由），后续不再重复询问已决定的问题。
-- **晋升**：要求对比通过、`approve` 指向同一 commit 与同一报告哈希、`v<target>` tag 指向该 commit、
-  计划门通过；随后快照代码/配置/pin/计划记录，fast-forward，并在晋升后的稳定树跑 smoke。smoke 失败
-  自动 `reset --hard` 回快照（exit 5）。
-- **回退不依赖候选**：晋升时生成 `_work/iteration/rollback-<id>.py`，只用标准库 + git；即使晋升后的
-  `iteration.py` 已经坏了也能恢复。演练要求至少一次"晋升失败→回退→稳定端测试通过"。
-- **边界**：候选发版默认不 push；晋升默认不 push（`--push` 显式开启）。同一轮只允许一个活跃迭代；
-  需要重新初始化时用 `--force`，不静默改写旧记录。
-
-退出码：`0` 成功；`1` 命令失败；`2` 参数/缺少迭代或证据；`3` 身份/隔离/执行端快照违规；
-`4` 门禁拒绝（计划、证据、对比、验收、tag、脏树）；`5` 晋升/回退 smoke 失败且已恢复旧版。
-
-
-## 怎么用
-
-1. 开工：`python scripts/session.py pin`（锁契约版本 + 根身份）+ `python scripts/check_env.py --short-call`（确认出口与额度）+ `python scripts/models.py team scan`（把可用 Agent 列给用户，确认后才入队）。目标是下一代版本时，先在干净稳定端 `iteration.py init --candidate <独立路径>`。
-2. 每轮：首行 `python scripts/session.py status --stage <阶段>`；变了就跑 `session.py check`，记偏差但不切版本；路径/盘变了则必须 `pin --force` 后重做跳过的门。
-3. 方案设计：`python scripts/models.py route --role plan` 看谁最适合，再 `python scripts/models.py plan --requirements <需求>` 产出 `_work/plan/plan.md`（含 WP 表）；**planner 不负责分任务**。
-4. 方案评审：`build_envelope.py --artifact _work/plan/plan.md ...` + `run_gpt.py --role plan-review --milestone plan ...`，必须换一个家族；结果落到 `plan.review.json` 后跑 `python scripts/plan_gate.py check --envelope ... --result ...`，通过才可分发。同一里程碑最多 2 轮，第 3 轮要 `--why-unclosed`。
-5. 任务分发：lead（dispatcher）根据已评审方案建任务板、定 owner、拆调用；planner 不参与分配。事实包先 `facts_pack.py freeze`，范围/预算变了就 `bump`；迭代中的写操作只落在候选工作区。
-6. 分工前：`python scripts/quota.py`，照它给的档位决定"谁生产、GPT 做什么、怎么拆调用"；S/A 至少安排一个 GPT 生产单元（`--role produce --work-package WPx --produce-artifact <路径> --cd <候选工作区>`）。
-7. 评审前：`python scripts/build_envelope.py --artifact <文件或目录> --out <yaml> --ledger <台账> --unit "api::src/api.py:40-90::handle_request" --test-evidence _work/evidence/tests.json`，第一轮加 `--init-ledger`。
-8. 调用：`python scripts/run_gpt.py --prompt-file <brief> --role review --milestone <M> --request-id <编号> --sandbox read-only --schema assets/result.schema.json --envelope <yaml> --output <payload> --result-path <结果>`；不合 schema、facts 过期或预算超限都会在调用前/后被拒。
-9. 收结论：`python scripts/validate_result.py --result <结果> --envelope <yaml>` 通过后再逐条回源验证；采纳/拒绝写进台账，GPT 生产单元用 `review_budget.py adopt` 落结论；交付前跑 `review_budget.py deliver`。
-10. 候选交付：候选端 `release.py --version <目标版本> --no-push` 产出 tag 后，回到稳定端重录证据（`iteration.py evidence`），再 `iteration.py compare`；对比通过后由用户验收（`approve --by`），最后 `iteration.py promote`，需要撤销时 `rollback --yes`。
-11. 结束：`python scripts/check_docs.py --run-tests` + `python scripts/release.py --version <X.Y.Z> --note "..."`（本地可加 `--no-push`）；回报额度用量、调用统计、偏差、未闭环项，并回答"本轮 skill 是否中断"。
+- 执行层守卫覆盖技能自己的受控脚本路径，以及候选根目录的 clean-tree/提交/diff 检查；**宿主工具写文件、任意 shell、不调用 `authority.py` 的第三方插件不在拦截范围**，依赖 DSH 沙箱/审批。
+- `--by user` 是**声明**，不是身份认证；设置 `DSH_GOVERNANCE_SECRET` 后可校验 HMAC 审批令牌。状态缺失/损坏按失败关闭（exit 3）。
+- 语义改写同一事项、暂停时已在飞行中的调用、成本/token 预算不强制；这些在 `references/governance.md` 的需求矩阵中标为 Partial。
+- 删除全部本地标记（含 pin）超出本地保证；决策链是哈希绑定，不是密码学签名。
 
 ## 维护约定
 
 - **只改这个目录**，Spec 已冻结。
 - Agent 读英文文件，人读这份 README；同一条规则不写两遍。
-- 新增规则先判断是否真的改变决策；能从 SKILL.md 推断的不写。
-- 改规则 → 升 `SKILL.md` 的 `metadata.version` → 在本文件更新日志加一行 → push。
+- 新增规则先判断是否真的改变决策；能从 `SKILL.md` 推断的不写。
+- 改规则 → 升 `SKILL.md` 的 `metadata.version` → 在更新日志加一行 → push。
 
 ## 更新日志
 
 | 版本 | 日期 | 变更 |
 |---|---|---|
-| 2.4.0 | 2026-11-03 | 人类治理决策权：委托书/思路评估/L1-L2-L3/请求与拒绝记忆/授权与原子额度/执行层守卫/控制模式/决策链；authority.py 与 331 项自测；331 项离线自测 |
+| 2.4.0 | 2026-11-03 | 人类治理决策权：委托书/思路评估/L1-L2-L3/请求与拒绝记忆/授权与原子额度/执行层守卫/控制模式/决策链；331 项离线自测 |
 | 2.3.0 | 2026-11-02 | 自举迭代：稳定版驱动独立 worktree 候选版，执行端哈希冻结与双身份 pin，commit 绑定测试证据，基线对比、用户验收、快照晋升与独立回退；新增 iteration.py、迭代文档与 28 项迭代专项测试；288 项离线自测 |
 | 2.2.0 | 2026-10-29 | 可执行门禁：方案评审门、评审预算、测试证据、事实包版本、工作区身份、GPT 生产核算与发版检查；设计/实现各 4 轮 GPT 评审后通过；260 项离线自测 |
 | 2.1.0 | 2026-10-27 | 方案设计与任务分发分离：新增 `plan` 角色与 `models.py plan`，按 Reasoning/Design/Agentic/Coding 评分选 planner（可在 `overrides.<model>.scores` 覆盖），先独立评审方案再由 lead 分发；`call --role plan` 拒绝；dsh planner 由会话自己写；155 项离线自测 |
