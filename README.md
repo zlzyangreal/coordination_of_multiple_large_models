@@ -3,11 +3,15 @@
 用于 **2 个及以上大模型协作** 的调度与对接：谁负责、怎么交接、评审结论怎么判断可信、出错怎么退。只管协作机制——代码、文档、数据、方案都适用；代码风格、写作、排版属于项目自己的事实包与 DoD，不写进这里。
 
 - 仓库：<https://github.com/zlzyangreal/coordination_of_multiple_large_models>
-- 版本：2.4.0（2026-11-03）
-- 当前离线自测：331 项（mock providers，不联网）
+- 版本：3.0.0（2026-11-09）
+- 当前离线自测：331 项 Python 离线自测 + 插件 Node 测试（mock 上下文，不联网）
 - 上一代：`多模型协作Spec.md` v2.4.1，已冻结，仅作留档
 
 ## 版本核心
+
+### 3.0.0 DSH 原生多模型协作插件
+
+同一个仓库现在也是可安装的 DSH Bundle（`package.json` → `dsh.bundle`、`cordis.patch.yml`、`lib/`）。新增：默认 **OFF** 的全局总开关；开关 ON 时宿主注入 **40 条规则契约**，会话确认前拒绝其他工具（规则先行，不依赖 agent 主动读 SKILL.md）；**版本锁定 + 用户验证后激活**（运行版本与包摘要都匹配上次验证值才可启用，新版本在独立验证 Profile 暂存）；设置页按维护者声明列出可选扩展，安装需确认且先装为禁用、再单独验证启用；本地 I0–I3 JSONL 日志（按日轮转、去重、脱敏、留存，不自动修复/上传/进 Git）。支持范围为 **DSH 0.2.1-rc.3 Web Profile / Windows 11 x64**；桌面版预期可用但本版未实测，见 `docs/desktop.md`。
 
 ### 2.4.0 人类治理的决策权
 
@@ -63,12 +67,38 @@ New-Item -ItemType Junction `
 
 ## 脚本
 
-`scripts/check_env.py`、`scripts/session.py`、`scripts/run_gpt.py`、`scripts/authority.py`、`scripts/plan_gate.py`、`scripts/review_budget.py`、`scripts/facts_pack.py`、`scripts/test_evidence.py`、`scripts/check_docs.py`、`scripts/release.py`、`scripts/gate_common.py`、`scripts/models.py`、`scripts/model_registry.py`、`scripts/model_config.py`、`scripts/model_http.py`、`scripts/model_route.py`、`scripts/quota.py`、`scripts/validate_result.py`、`scripts/schema_for_codex.py`、`scripts/reap_turns.py`、`scripts/build_envelope.py`、`scripts/iteration.py`、`scripts/selftest_models.py`。完整说明见 `SKILL.md` 脚本表。
+- `scripts/check_env.py`
+- `scripts/session.py`
+- `scripts/run_gpt.py`
+- `scripts/authority.py`
+- `scripts/plan_gate.py`
+- `scripts/review_budget.py`
+- `scripts/facts_pack.py`
+- `scripts/test_evidence.py`
+- `scripts/check_docs.py`
+- `scripts/check_rules.py`
+- `scripts/release.py`
+- `scripts/gate_common.py`
+- `scripts/models.py`
+- `scripts/model_registry.py`
+- `scripts/model_config.py`
+- `scripts/model_http.py`
+- `scripts/model_route.py`
+- `scripts/quota.py`
+- `scripts/validate_result.py`
+- `scripts/schema_for_codex.py`
+- `scripts/reap_turns.py`
+- `scripts/build_envelope.py`
+- `scripts/iteration.py`
+- `scripts/selftest_models.py`
+
+完整说明见 `SKILL.md` 脚本表。
 
 ## 更新日志
 
 | 版本 | 日期 | 变更 |
 |---|---|---|
+| 3.0.0 | 2026-11-09 | DSH 原生插件：标准 Bundle/生命周期、默认 OFF 总开关、40 条规则先行的契约门禁、版本锁定与用户验证后激活、声明式可选扩展（安装禁用 + 单独启用）、本地 I0–I3 日志；保留 v2.4.0 的 38 条规则、331 项离线自测与全部门禁；支持 DSH 0.2.1-rc.3 Web Profile（桌面未实测） |
 | 2.4.0 | 2026-11-03 | 人类治理决策权：委托书/思路评估/L1-L2-L3/请求与拒绝记忆/授权与原子额度/执行层守卫/控制模式/决策链；331 项离线自测 |
 | 2.3.0 | 2026-11-02 | 自举迭代：稳定版驱动独立 worktree 候选版，执行端哈希冻结与双身份 pin，commit 绑定测试证据，基线对比、用户验收、快照晋升与独立回退；新增 iteration.py、迭代文档与 28 项迭代专项测试；288 项离线自测 |
 | 2.2.0 | 2026-10-29 | 可执行门禁：方案评审门、评审预算、测试证据、事实包版本、工作区身份、GPT 生产核算与发版检查；设计/实现各 4 轮 GPT 评审后通过；260 项离线自测 |

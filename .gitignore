@@ -3,3 +3,8 @@ __pycache__/
 _work/
 .DS_Store
 Thumbs.db
+node_modules/
+/coordination/
+*.jsonl
+/.multimodel/
+.verify-*

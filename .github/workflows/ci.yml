@@ -1,0 +1,24 @@
+name: ci
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Plugin tests
+        run: npm test
+      - name: Package verification
+        run: node verify.mjs
+      - name: Rules parity
+        run: python scripts/check_rules.py
+      - name: Docs and 331 offline cases
+        run: python scripts/check_docs.py --run-tests

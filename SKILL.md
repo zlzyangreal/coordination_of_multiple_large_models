@@ -1,9 +1,9 @@
 ---
 name: coordination_of_multiple_large_models
-description: Orchestrate two or more LLMs on one deliverable, across code, documents and data — capability check, model verification, quota-tiered routing, per-project multi-provider access (free/keyless, API key, custom base URL, local server, account-token import), task contract, request/result envelopes, zero-write review calls, schema-enforced review gate, plan-review gate, review-call budget, test evidence in the envelope, delivery gate, release/documentation checks, failure handling, stable-version-drives-candidate self-bootstrap with dual workspaces, baseline comparison and gated promotion/rollback, and human-governed decision authority (mandate, idea intake, L1/L2/L3 decisions, scoped grants, execution guards, decision records). Use for multi-model routing, adding or switching model providers, GPT/Codex reviews, plan-first production, subagent handoffs, adopting review findings, model outages or proxy issues, workspace migration, releases, self-bootstrap iteration, promotion or rollback, human approval/authorization boundaries, decision records, and collaboration postmortems. 触发词：多模型协作、模型分工、模型路由、模型接入、模型团队、入队审批、方案设计、架构设计、技术选型、计划与分发分离、模型切换、免费模型、API Key、自定义 API 地址、Ollama、本地模型、额度分档、GPT 额度利用率、GPT 评审、codex 评审、子代理协作、评审结论采纳、模型卡顿、codex 超时、代理问题、协作复盘、方案评审门、评审轮次预算、测试证据、工作区身份、发版一致性检查、自举迭代、稳定版、候选版、双工作区、版本晋升、回退演练、决策权、人类治理、授权范围、审批拦截、L1/L2/L3、任务预授权、决策记录、思路评估。
+description: Orchestrate two or more LLMs on one deliverable, across code, documents and data — capability check, model verification, quota-tiered routing, per-project multi-provider access (free/keyless, API key, custom base URL, local server, account-token import), task contract, request/result envelopes, zero-write review calls, schema-enforced review gate, plan-review gate, review-call budget, test evidence in the envelope, delivery gate, release/documentation checks, failure handling, stable-version-drives-candidate self-bootstrap with dual workspaces, baseline comparison and gated promotion/rollback, and human-governed decision authority (mandate, idea intake, L1/L2/L3 decisions, scoped grants, execution guards, decision records). It is also a DSH-native bundle with one default-OFF global switch, a host-injected forty-rule contract that must be acknowledged before any tool call, a version lock with user-verified activation, declaration-driven optional extensions (install disabled, activate separately), and local-only I0–I3 logs. Use for multi-model routing, adding or switching model providers, GPT/Codex reviews, plan-first production, subagent handoffs, adopting review findings, model outages or proxy issues, workspace migration, releases, self-bootstrap iteration, promotion or rollback, human approval/authorization boundaries, decision records, DSH plugin installation/enable/disable/configuration, global switch, rule-first contract, version lock, optional extensions, one-click install and local log triage. 触发词：多模型协作、模型分工、模型路由、模型接入、模型团队、入队审批、方案设计、架构设计、技术选型、计划与分发分离、模型切换、免费模型、API Key、自定义 API 地址、Ollama、本地模型、额度分档、GPT 额度利用率、GPT 评审、codex 评审、子代理协作、评审结论采纳、模型卡顿、codex 超时、代理问题、协作复盘、方案评审门、评审轮次预算、测试证据、工作区身份、发版一致性检查、自举迭代、稳定版、候选版、双工作区、版本晋升、回退演练、决策权、人类治理、授权范围、审批拦截、L1/L2/L3、任务预授权、决策记录、思路评估、DSH 插件、插件安装、插件启停、总开关、规则先行、契约确认、版本锁定、验证后激活、可选扩展、一键安装、本地日志、I0-I3。
 metadata:
-  version: 2.4.0
-  updated: 2026-11-03
+  version: 3.0.0
+  updated: 2026-11-09
 allowed-tools: Read, Write, Edit, Bash
 ---
 
@@ -60,6 +60,8 @@ Skip for single-model, single-file, one-shot work — but still run `scripts/che
 36. **Ask once, batch, and keep moving.** One matter has one canonical key (`mandate_version:kind:subject`) and one open request; related items are batched in `requests.md`; a settled key is refused unless reopened with a reason and new evidence. While one decision waits, unaffected authorised work continues. A rejected direction cannot return as a "small optimisation".
 37. **Failure stops; it never degrades.** Missing, corrupt or inconsistent governance state is exit 3 for protected operations — never "disabled", never auto-reset. Only the user changes the mode; `off` needs a stored approval and a safe-stop choice for open work. The mode survives model switches, context compaction, task splitting and subagent calls because it is on disk. A reconcile/re-checkpoint records the state a resumed task depends on.
 38. **State the enforcement boundary.** Enforcement covers the skill's controlled script paths and the candidate-root diff check; host tool calls, shell commands and non-cooperating third-party plugin calls are outside it and rely on DSH's sandbox/approval. `--by user` is an attestation unless a host HMAC (`DSH_GOVERNANCE_SECRET`) authenticates it. Records are hash-chained, not signed; deleting every local marker is outside the local guarantee. Never claim global enforcement or agent-proof identity — say which requirement is partial and why.
+39. **Lock the version; activate only after the user verifies.** The running package is authoritative. A new version is staged in a separate verification profile; the plugin reports `pending_verification` when the running version or package digest differs from the last user-verified values, injects no contract and executes no controlled action until the user runs the checks and explicitly activates it. First install is pending too. The plugin never updates, downgrades or hot-swaps itself, and true side-by-side execution in one profile is not claimed.
+40. **Load the rules before any controlled action.** When the switch is ON, the host injects the forty-rule contract and the session must acknowledge it before any tool call except `coordination status`; an invalid or missing contract keeps a deny guard, is logged at I0 and fails closed. Enforcement must not depend on the agent choosing to read `SKILL.md`, and the denial must name the required acknowledgement.
 
 ## Workflow
 
@@ -78,9 +80,10 @@ Skip for single-model, single-file, one-shot work — but still run `scripts/che
 ## Session
 
 ```
-SKILL v2.3.0 (pinned 22:54, D:) | quota 5h 78% / week 96% | 阶段：评审
-iteration: stable v2.2.0 @6dae3ed -> candidate v2.3.0 @12e3457 (development)
-governance: enforce v3 | open L1 1 / L2 0 | grants 2 | checkpoint: review
+SKILL v3.0.0 (pinned 22:54, D:) | quota 5h 78% / week 96% | 阶段：评审
+iteration: stable v2.4.0 @f26cdda -> candidate v3.0.0 @<commit> (development)
+governance: enforce v4 | open L1 1 / L2 0 | grants 2 | checkpoint: review
+plugin: switch ON (verified 3.0.0) | contract loaded | extensions 0/1 | logs I0 0 / I1 1
 ```
 
 - First turn: `python scripts/session.py pin`. Every turn after: `python scripts/session.py status --stage <stage>`.
@@ -90,6 +93,30 @@ governance: enforce v3 | open L1 1 / L2 0 | grants 2 | checkpoint: review
 - Self-check each turn: gate run? runner role? quota read? workspace role? Answer in the status line or the event log, not from memory.
 - A mid-session repo update does not change behaviour: continue on the pin, record one deviation line, and mention it at delivery.
 - A path/disk change is not a deviation to log: it blocks until `session.py pin --force`, then redo the skipped gate.
+
+## DSH plugin
+
+The same repository is also a DSH bundle (`package.json` → `dsh.bundle`, `cordis.patch.yml`,
+`lib/index.js`, `lib/client.js`). Install it with `dsh plugin --profile <name> add <spec>`; the
+desktop profile is managed by the Electron app. The plugin adds:
+
+- one global switch, default **OFF**; OFF leaves DSH native, ON injects the forty-rule contract,
+  registers the `coordination` tool and refuses every other tool until the session acknowledges
+  the contract (rule 40);
+- a version lock: the running package version **and** digest must match the last user-verified
+  values, otherwise the plugin starts `pending_verification` and does nothing controlled until the
+  user runs the checks and explicitly activates it; a new version is staged in a separate
+  verification profile (rule 39);
+- a settings page that lists **declared** optional extensions, installs one (disabled) only after
+  explicit confirmation, and activates only after identity plus a declared public capability probe
+  pass; `dsh-our-free-model` is optional and never installed by default;
+- local-only `runtime_error_YYYY-MM-DD.jsonl` / `optimization_YYYY-MM-DD.jsonl` logs with I0–I3,
+  dedupe, redaction, rotation and retention under `$DSH_HOME/coordination/`; no auto-fix, upload or
+  git inclusion.
+
+Supported platform for v3.0.0: DSH **0.2.1-rc.3 Web profile on Windows 11 x64**. Desktop is
+expected but unverified; see `docs/desktop.md`. Enforcement covers the plugin's own controlled
+paths only (rule 38).
 
 ## Scripts
 
@@ -105,6 +132,7 @@ governance: enforce v3 | open L1 1 / L2 0 | grants 2 | checkpoint: review
 | `python scripts/facts_pack.py freeze\|bump\|check\|show\|set-budget` | Versioned facts pack: canonical hash, version log, budget edits |
 | `python scripts/test_evidence.py record -- <cmd>` | Record command/exit code/log/hash evidence for a review envelope |
 | `python scripts/check_docs.py --root . [--run-tests]` | Version/count/trigger/rule/path/script/asset consistency |
+| `python scripts/check_rules.py [--root .]` | Verify the 40-rule manifest matches `SKILL.md` paragraphs and the v2.4.0 baseline hash |
 | `python scripts/release.py --version X.Y.Z --note "..." [--dry-run] [--no-push]` | Check docs, run the real suite, update version/count/changelog, commit, tag, push |
 | `python scripts/models.py <init\|providers\|add\|key\|account\|team\|list\|discover\|test\|use\|route\|chains\|call\|plan\|health\|budget\|doctor>` | Per-project model access; `call` infers `produce` when role is omitted |
 | `python scripts/quota.py [--source {auto,live,log}] [--json] [--remaining 62 --minutes 210]` | 5 h / weekly remaining, tier S/A/B/C/R/U, who produces, call shape |

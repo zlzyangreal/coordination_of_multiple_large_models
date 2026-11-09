@@ -1,0 +1,55 @@
+# Failure handling and artifact safety
+
+## Failure matrix
+
+| Situation | Verdict | Action |
+|---|---|---|
+| Reconnects / timeouts | triage first | environment.md; report if triage fails; keep alive 10–20 min if it passes |
+| Timeout, no new logs | failed | runner kills and closes the turn; switch model or self-produce; record real cause |
+| Turn stuck `inProgress` | hygiene | `scripts/reap_turns.py --older-than 30` (dry-run) then `--apply`; backup is automatic |
+| Production call run with `--ephemeral` | defect | no rollout, no history, quota reader blind: rerun through `scripts/run_gpt.py`; note it in the postmortem |
+| Quota reading unknown (tier U) | constrained | never assume a surplus; take a live reading or `--remaining`; keep GPT work to gates meanwhile |
+| Quota exhausted / tier R | constrained | lead takes all text work; one visual gate only; defer the rest to the next window and report the reset time |
+| Window closed with >50% unused and a backlog | defect | wasted capacity: log used% and the reason, change the next window's plan (quota-routing.md) |
+| Approval rejected | unavailable | substitute or self-produce; never re-request the same model |
+| File locked / permission denied | environment | report; release lock or change mode; no silent retries |
+| Artifact overwritten | incident | restore from snapshot or call log; postmortem entry |
+| Write conflict | incident | owner's version wins; merge with diff; record rollback point |
+| Reviewer vs producer conflict | technical | lead decides, records reasons |
+| Result fails schema validation | blocked | not adopted; `run_gpt.py` exits 3; re-run with `--schema`, or repair and re-validate |
+| Reviewer was asked to write `result_path` | defect | zero-write rule: capture via runner `-o`; the round is void under a read-only sandbox |
+| Advisory draft reviewed by its author | defect | findings marked `origin: advisory-derived`; delivery declares non-independent; add a second reviewer |
+| Contract changed mid-session | governance | keep executing the pinned version; log the deviation; delivery states "pinned vX, repo vY" |
+| Skill dropped mid-session | defect | status line missing → declare it immediately, re-read, redo the skipped gate; postmortem question |
+| Budget treated as a constraint | process | expect a reviewer will litigate it; budget overrun is `notice`, fix the facts pack split |
+| Production dispatched without a reviewed plan | blocked | `plan_gate.py` exit 3/4/5/6; review the plan, or record a deviation — there is no production waiver |
+| Review round 3 without an answer | blocked | `--why-unclosed` required; write why rounds 1-2 did not close before spending |
+| Review budget exceeded | process | one-off `--budget-change`, or `review_budget.py raise` which bumps the facts pack; both log an event |
+| Facts pack stale or unversioned | blocked | `facts_pack.py check` exits 3; `bump --reason` or re-freeze before building a review envelope |
+| Evidence ignored by the review | invalid | `test_refs` must cite the log hash and a verbatim excerpt absent from the summary; the log is a review unit |
+| Workspace identity mismatch | blocked | the pin names another root/disk (or is legacy): `session.py pin --force`; never read the other `_work` |
+| S/A delivery with no GPT production | blocked | `review_budget.py deliver` exit 5; produce a plan work package or record a stored user approval |
+| Probe used as production | defect | `--role probe` is text-only and never adopted; rerun as `--role produce` after the plan gate |
+| Unusable model output | quality | fix facts pack / narrow scope / change model; never ship as-is |
+
+## Artifact safety
+
+- **Snapshot before overwrite**: copy the current artifact to `_work/snapshots/<name>_<hhmmss>.<ext>`; keep at most 3 per file.
+- **Path separation**: `-o` / `result_path` never point at the artifact.
+- **Restore order**: diff the damage → newest snapshot → replay `apply_patch` entries from the call log → postmortem entry (what overwrote it, how restored, prevention).
+
+## Cleanup
+
+- Delete error logs, intermediate builds/exports, throwaway scripts at stage end; keep evidence in the ledger or postmortem, not as files.
+- `_work/` over 2 GB: delete oldest snapshots and build outputs. The finals directory holds finals only.
+- Snapshot cap: 3 per file, no per-edit archives.
+
+## Escalate immediately
+
+Report symptom + intended fix before acting, and cap silent retries at 2:
+
+- permission denied / wrong sandbox mode;
+- file locked, cannot write or delete;
+- artifact overwritten or path collision;
+- network egress or proxy not working;
+- model verification failed or ambiguous candidates.
