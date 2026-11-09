@@ -18,6 +18,7 @@
 ```
 
 - `policy` 只有 `optional`/`required`；当前唯一声明是 `optional`，**默认不安装**。
+- 每条声明必须自带 `source`、展示信息和 `probe`；不会从默认项继承来源，也不会按 id 猜来源。缺 `source` 时界面显示“来源未声明”，不可安装。
 - 未声明的插件不显示、不安装、不推断依赖等级。
 - 新增扩展由维护者改声明；不需要改编排核心代码。
 
@@ -36,8 +37,9 @@
 只有同时满足以下条件才允许本插件调用 `pluginManager.setBundleEnabled(id, true)`：
 
 1. 宿主报告了具体版本/来源（`unknown` 不通过）；
-2. 声明里存在公开能力探测（`probe.kind = "bundle"`，即 bundle 可用且可启用）；
-3. 用户再次明确确认。
+2. 宿主的 `listBundles` 明确报告可读的 `availability`（本宿主为 `profile` 或 `installation`；缺失/未知/`missing` 不算可用）；
+3. 声明里存在公开能力探测（`probe.kind = "bundle"`，即 bundle 可用且可启用）；
+4. 用户再次明确确认。
 
 仅“存在/已安装”不构成启用资格；不符合时界面提示到 DSH 插件管理器处理，不伪造状态。安装授权不等于批准模型调用、外传数据或额度使用；实际参与编排时仍受 L1/L2/L3、模型接入审批与预算约束。
 

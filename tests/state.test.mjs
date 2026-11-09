@@ -88,3 +88,30 @@ test('corrupt state is quarantined and fails safe', async () => {
     await rm(tmp, { recursive: true, force: true })
   }
 })
+
+test('invalidate forces pending and disables controlled execution', async () => {
+  const tmp = await mkdtemp(path.join(os.tmpdir(), 'mmc-state-'))
+  try {
+    const store = await makeStore(tmp)
+    await store.completeVerification()
+    await store.setEnabled(true)
+    assert.equal(store.available(), true)
+    await store.invalidate('digest changed')
+    assert.equal(store.mode(), 'pending_verification')
+    assert.equal(store.available(), false)
+    assert.match(store.summary().lastError, /digest changed/)
+  } finally {
+    await rm(tmp, { recursive: true, force: true })
+  }
+})
+
+test('verification stores the digest that was actually checked', async () => {
+  const tmp = await mkdtemp(path.join(os.tmpdir(), 'mmc-state-'))
+  try {
+    const store = await makeStore(tmp)
+    await store.completeVerification({ digest: 'b'.repeat(64) })
+    assert.equal(store.mode(), 'pending_verification')
+  } finally {
+    await rm(tmp, { recursive: true, force: true })
+  }
+})

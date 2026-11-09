@@ -28,13 +28,14 @@ test('apply registers one section and one route when OFF; verify then ON install
   const guards = []
   const routes = []
   const effects = []
+  let sectionDisposed = 0
   const ctx = {
     get(name) {
       if (name === 'profileContext') return { name: 'test', home: tmp, dir: path.join(tmp, 'profiles', 'test') }
       if (name === 'webServer') return this.webServer
       return undefined
     },
-    systemPrompt: { section(section) { sections.push(section); return () => {} } },
+    systemPrompt: { section(section) { sections.push(section); return () => { sectionDisposed += 1 } } },
     tools: {
       register(definition) { tools.push(definition); return () => {} },
       guard(fn) { guards.push(fn); return () => {} },
@@ -57,6 +58,16 @@ test('apply registers one section and one route when OFF; verify then ON install
     assert.equal(initial.body.switch.pending, true, 'first install needs verification')
     const token = initial.body.csrfToken
     assert.ok(token)
+
+    const noToken = await request(route.handler, {
+      method: 'POST', url: '/_multimodel/toggle',
+      headers: { 'content-type': 'application/json' }, body: { enabled: true },
+    })
+    assert.equal(noToken.status, 403)
+    const badOrigin = await request(route.handler, {
+      url: '/_multimodel/status', headers: { origin: 'http://evil.example' },
+    })
+    assert.equal(badOrigin.status, 403)
 
     const verified = await request(route.handler, {
       method: 'POST', url: '/_multimodel/verify',
@@ -88,11 +99,15 @@ test('apply registers one section and one route when OFF; verify then ON install
     assert.equal(guards[0]({ name: 'bash', arguments: {}, agent: session.agent }), undefined)
     const other = guards[0]({ name: 'bash', arguments: {}, agent: { session: { id: 'session-2' } } })
     assert.match(String(other), /contract/)
+    const shared = await tool.execute({ action: 'contract' }, { agent: { id: 'shared-agent' } })
+    assert.equal(shared.ok, false)
+    assert.match(shared.result, /session_identity_unavailable/)
   } finally {
     for (const effect of effects) {
       const dispose = effect()
       if (typeof dispose === 'function') await dispose()
     }
+    assert.equal(sectionDisposed, 1, 'unload disposes the prompt section')
     await rm(tmp, { recursive: true, force: true })
   }
 })

@@ -66,3 +66,44 @@ test('fallback file receives a line when the primary log path fails', async () =
     await rm(tmp, { recursive: true, force: true })
   }
 })
+
+test('an unwritable log root never throws into the caller', async () => {
+  const tmp = await mkdtemp(path.join(os.tmpdir(), 'mmc-logs-'))
+  try {
+    await writeFile(path.join(tmp, 'logs'), 'not a directory', 'utf8')
+    const store = new LogStore({ root: tmp, profile: 'test', projectId: 'p', version: '3.0.0', enabled: true })
+    const record = await store.record({ kind: 'runtime', priority: 'I0', eventType: 'state.corrupt', summary: 'x' })
+    assert.ok(record)
+    assert.equal(store.summary().logWriteFailed, true)
+  } finally {
+    await rm(tmp, { recursive: true, force: true })
+  }
+})
+
+test('OFF still records state/contract/verify lifecycle faults', async () => {
+  const tmp = await mkdtemp(path.join(os.tmpdir(), 'mmc-logs-'))
+  try {
+    const store = new LogStore({ root: tmp, profile: 'test', projectId: 'p', version: '3.0.0', enabled: false })
+    assert.ok(await store.record({ kind: 'runtime', priority: 'I0', eventType: 'state.corrupt', summary: 'x' }))
+    assert.ok(await store.record({ kind: 'runtime', priority: 'I0', eventType: 'contract.invalid', summary: 'x' }))
+    assert.equal(await store.record({ kind: 'optimization', priority: 'I1', eventType: 'slow', summary: 'x' }), null)
+  } finally {
+    await rm(tmp, { recursive: true, force: true })
+  }
+})
+
+test('primary and fallback write failure stays in memory and is reported', async () => {
+  const tmp = await mkdtemp(path.join(os.tmpdir(), 'mmc-logs-'))
+  try {
+    const store = new LogStore({ root: tmp, profile: 'test', projectId: 'p', version: '3.0.0', enabled: true })
+    await store.ready
+    store.append = async () => { throw new Error('primary') }
+    store.fallback = async () => { throw new Error('fallback') }
+    await store.record({ kind: 'runtime', priority: 'I0', eventType: 'state.corrupt', summary: 'memory only' })
+    const summary = store.summary()
+    assert.equal(summary.logWriteFailed, true)
+    assert.equal(summary.fallbackWriteFailed, true)
+  } finally {
+    await rm(tmp, { recursive: true, force: true })
+  }
+})

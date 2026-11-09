@@ -7,22 +7,13 @@
 当前正在用的 Profile 不动，先把候选版装到单独的验证 Profile：
 
 ```powershell
-# 在仓库根目录；dsh 在 PATH 上时
+# 在仓库根目录；dsh 与 pnpm 在 PATH 上
 dsh plugin --profile coordination-verify add .
-
-# 没有 dsh 命令时（桌面版自带运行时）：
-$env:ELECTRON_RUN_AS_NODE = "1"
-& "D:\deepseek\DeepSeek Harness.exe" `
-  "D:\deepseek\resources\app.asar\dsh\node_modules\@deepseek-ai\dsh\lib\bin.js" `
-  plugin --profile coordination-verify add "link:<仓库绝对路径>"
 ```
 
-如果 `pnpm` 不在 PATH，先把 DSH 运行时里的 pnpm 加进来（或用桌面版插件管理器安装）：
-
-```powershell
-$runtime = "$env:USERPROFILE\.dsh\dsh-runtimes\dsh-primary-runtime\dependencies"
-$env:PATH = "$runtime\node\bin;$runtime\pnpm\bin;$env:PATH"
-```
+`dsh plugin` 会把包操作转发给 pnpm；pnpm 不在 PATH 时请先按 pnpm 官方方式安装。不要通过
+`app.asar` 内部路径或手工改 Profile 清单安装；桌面 Profile 由 Electron 应用管理，请在应用内
+插件管理器安装/更新/卸载（桌面本版未实测，见 [desktop.md](desktop.md)）。
 
 安装后确认 bundle 层：
 
