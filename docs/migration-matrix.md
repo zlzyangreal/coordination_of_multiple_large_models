@@ -51,4 +51,4 @@
 - 规则 1–38 的原文与 `SKILL.md` 逐条一致，`scripts/check_rules.py` 在构建/启动时校验；缺一条或改动基线即失败（I0）。
 - 规则 38 的边界不变：宿主工具、直接 shell/网络、非合作第三方插件与模型推理不在强制范围。
 - 规则 39/40 的“同 Profile 双版本并行”不在声明内：39 是独立验证 Profile + 验证后激活；40 是宿主注入 + 会话确认 + 拒绝守卫。
-- 331 项 Python 离线自测保持通过；新增 36 项 Node 测试覆盖 state/logs/extensions/guard/bundle/规则一致性。
+- 331 项 Python 离线自测保持通过；新增 37 项 Node 测试覆盖 state/logs/extensions/guard/bundle/规则一致性。

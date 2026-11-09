@@ -51,3 +51,28 @@ test('abortAll cancels a gate before it can complete', async () => {
     await rm(tmp, { recursive: true, force: true })
   }
 })
+
+test('abort during delayed resolution returns ABORT_ERR rather than ENOENT', async () => {
+  const tmp = await mkdtemp(path.join(os.tmpdir(), 'mmc-engine-'))
+  try {
+    await cp(path.join(root, 'scripts'), path.join(tmp, 'scripts'), { recursive: true })
+    await cp(path.join(root, 'assets'), path.join(tmp, 'assets'), { recursive: true })
+    const engine = new PythonEngine({
+      ctx: { get: () => undefined },
+      root: tmp,
+      projectRoot: tmp,
+      runtimeHash: await runtimeDigest(tmp),
+      log: null,
+    })
+    engine.resolve = async () => {
+      await new Promise((resolve) => setTimeout(resolve, 100))
+      return null
+    }
+    const running = engine.runPlanGate(tmp)
+    setTimeout(() => engine.abortAll(), 10)
+    const result = await running
+    assert.equal(result.code, 'ABORT_ERR')
+  } finally {
+    await rm(tmp, { recursive: true, force: true })
+  }
+})

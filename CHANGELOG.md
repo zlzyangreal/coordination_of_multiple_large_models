@@ -19,6 +19,6 @@ DSH-native bundle on top of the v2.4.0 engine.
   redaction, rotation/retention, fallback; OFF collects only minimal lifecycle faults. No
   automatic repair, config write, upload or git inclusion.
 - Python core retained through `ctx.subprocess`; `core_unavailable` is I0 and fail-closed.
-- 331 Python offline cases still pass; 36 new Node tests cover state, logs, extensions, guard,
+- 331 Python offline cases still pass; 37 new Node tests cover state, logs, extensions, guard,
   bundle metadata and 40-rule parity.
 - Supported platform: **DSH 0.2.1-rc.3 Web profile, Windows 11 x64**. Desktop is unverified.
