@@ -41,7 +41,7 @@
     }
   },
   "scripts": {
-    "test": "node --test tests/bundle.test.mjs tests/contract.test.mjs tests/state.test.mjs tests/logs.test.mjs tests/extensions.test.mjs tests/tools.test.mjs tests/smoke.test.mjs",
+    "test": "node --test tests/bundle.test.mjs tests/contract.test.mjs tests/engine.test.mjs tests/state.test.mjs tests/logs.test.mjs tests/extensions.test.mjs tests/tools.test.mjs tests/smoke.test.mjs",
     "verify": "node verify.mjs"
   },
   "keywords": [

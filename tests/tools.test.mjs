@@ -73,3 +73,22 @@ test('tool contract acknowledges only a real session and then allows another too
   const status = await tool.execute({ action: 'status' }, session)
   assert.equal(status.ok, true)
 })
+
+test('pending verification keeps a deny guard and refuses contract/gate', async () => {
+  const state = {
+    available: () => false,
+    logicallyEnabled: () => true,
+    isAcked: () => false,
+    ackContract: async () => ({ epoch: 1 }),
+  }
+  const contract = { ok: true, hash: 'hash', ruleCount: 40, text: 'rules', errors: [] }
+  const guards = []
+  registerContractGuard({ tools: { guard: (fn) => { guards.push(fn); return () => {} } } }, { state, contract })
+  assert.match(String(guards[0]({ name: 'bash', arguments: {}, agent: { session: { id: 's' } } })), /PENDING VERIFICATION/)
+  assert.equal(guards[0]({ name: 'coordination', arguments: { action: 'status' }, agent: { session: { id: 's' } } }), undefined)
+  assert.match(String(guards[0]({ name: 'coordination', arguments: { action: 'contract' }, agent: { session: { id: 's' } } })), /PENDING VERIFICATION/)
+  const { tool } = makeTool({ state })
+  const result = await tool.execute({ action: 'contract' }, { agent: { session: { id: 's' } } })
+  assert.equal(result.ok, false)
+  assert.match(result.result, /pending_verification/)
+})

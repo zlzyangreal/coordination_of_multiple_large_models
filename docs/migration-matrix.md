@@ -43,12 +43,12 @@
 | 36 | Ask once, batch, and keep moving. | `authority.py request` | E | selftest governance | full |
 | 37 | Failure stops; it never degrades. | `authority.py mode/check` | N/E | tests/state.test.mjs + selftest governance | full |
 | 38 | State the enforcement boundary. | `references/governance.md + SKILL §Scope` | P/U | docs/architecture.md + tests/bundle | partial（仅受控路径；宿主/第三方在范围外） |
-| 39 | Lock the version; activate only after the user verifies. | `新增（mandate HC-8）` | N | tests/state.test.mjs | full |
-| 40 | Load the rules before any controlled action. | `新增（mandate HC-9）` | N | tests/smoke.test.mjs | full |
+| 39 | Lock the version; activate only after the user verifies. | `新增（mandate HC-8）` | N | tests/state.test.mjs + tests/engine.test.mjs | partial（验证后激活、摘要变更与引擎快照拒绝已测；真实宿主改写包文件的竞态仍无宿主级测试） |
+| 40 | Load the rules before any controlled action. | `新增（mandate HC-9）` | N | tests/tools.test.mjs + tests/smoke.test.mjs | full（宿主注册 + 无效契约/无会话/待验证/未确认的单元与 mock 流程已测；live model turn 未跑） |
 
 ## 说明
 
 - 规则 1–38 的原文与 `SKILL.md` 逐条一致，`scripts/check_rules.py` 在构建/启动时校验；缺一条或改动基线即失败（I0）。
 - 规则 38 的边界不变：宿主工具、直接 shell/网络、非合作第三方插件与模型推理不在强制范围。
 - 规则 39/40 的“同 Profile 双版本并行”不在声明内：39 是独立验证 Profile + 验证后激活；40 是宿主注入 + 会话确认 + 拒绝守卫。
-- 331 项 Python 离线自测保持通过；新增 31 项 Node 测试覆盖 state/logs/extensions/guard/bundle/规则一致性。
+- 331 项 Python 离线自测保持通过；新增 35 项 Node 测试覆盖 state/logs/extensions/guard/bundle/规则一致性。

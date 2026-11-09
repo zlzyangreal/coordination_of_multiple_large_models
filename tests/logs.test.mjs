@@ -107,3 +107,19 @@ test('primary and fallback write failure stays in memory and is reported', async
     await rm(tmp, { recursive: true, force: true })
   }
 })
+
+test('markStatus keeps the in-memory change when the index write fails', async () => {
+  const tmp = await mkdtemp(path.join(os.tmpdir(), 'mmc-logs-'))
+  try {
+    const store = new LogStore({ root: tmp, profile: 'test', projectId: 'p', version: '3.0.0', enabled: true })
+    const record = await store.record({ kind: 'optimization', priority: 'I1', eventType: 'retry', summary: 'x' })
+    await store.writeIndex()
+    store.writeIndex = async () => { throw new Error('index denied') }
+    const issue = await store.markStatus({ issueId: record.issue_id, status: 'investigating' })
+    assert.equal(issue.status, 'investigating')
+    assert.equal(issue.persisted, false)
+    assert.equal(store.summary().indexWriteFailed, true)
+  } finally {
+    await rm(tmp, { recursive: true, force: true })
+  }
+})

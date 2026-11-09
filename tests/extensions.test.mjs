@@ -105,3 +105,15 @@ test('activation that does not take effect returns ok:false', async () => {
   assert.equal(result.ok, false)
   assert.equal(result.status, 'installed_disabled')
 })
+
+test('an enabled but unverified bundle is not reported as a verified activation', async () => {
+  const registry = new ExtensionRegistry({
+    ctx: makeCtx([{ name: 'dsh-our-free-model', enabled: true }]),
+    declarations: undefined,
+    log: null,
+    state: null,
+  })
+  const result = await registry.activate('dsh-our-free-model', { confirm: true })
+  assert.equal(result.ok, false)
+  assert.equal(result.status, 'enabled_outside_gate')
+})
