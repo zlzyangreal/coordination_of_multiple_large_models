@@ -1,5 +1,18 @@
 # Changelog
 
+## 3.0.1 - 2026-11-10
+
+Desktop boot hotfix.
+
+- The client settings section now uses a string label and the package id, and both the
+  slot injection and registration are contained; a client slot failure can no longer fail
+  the renderer entry or prevent DSH from starting.
+- The host guards direct and late `webServer` route registration; a route failure is logged
+  as I0 `plugin.routes_failed` while the plugin stays loaded, instead of failing the host
+  entry. The OFF allowlist already admits `plugin.*`.
+- New client and host boot tests cover throwing `inject`/`register` and post-settlement
+  late callbacks; 42 Node tests and 331 Python cases pass.
+
 ## 3.0.0 — 2026-11-09
 
 DSH-native bundle on top of the v2.4.0 engine.
