@@ -35,6 +35,7 @@ function loadClient() {
   return {
     registered,
     errors,
+    inject: module.inject,
     apply(ctx) { module.apply(ctx) },
     restore() { console.error = originalError },
   }
@@ -90,6 +91,15 @@ test('client delayed injection callback is safe after apply settles', () => {
     }))
     assert.equal(typeof callback, 'function')
     assert.doesNotThrow(() => callback())
+  } finally {
+    loaded.restore()
+  }
+})
+
+test('client declares the slots service dependency', () => {
+  const loaded = loadClient()
+  try {
+    assert.deepEqual(loaded.inject, ['slots'])
   } finally {
     loaded.restore()
   }

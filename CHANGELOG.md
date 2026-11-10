@@ -1,5 +1,14 @@
 # Changelog
 
+## 3.0.2 - 2026-11-10
+
+Client settings section dependency fix.
+
+- The client module now declares `exports.inject = ["slots"]`, so Cordis waits for the slot
+  service before `apply`. Without it, v3.0.0 failed the client entry and v3.0.1's containment
+  catch hid the failure, leaving the app bootable but without the "多模型协作" settings section.
+- The client test asserts the `slots` dependency; 43 Node tests and 331 Python cases pass.
+
 ## 3.0.1 - 2026-11-10
 
 Desktop boot hotfix.
