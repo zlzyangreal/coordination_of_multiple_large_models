@@ -6,8 +6,14 @@ Client settings section dependency fix.
 
 - The client module now declares `exports.inject = ["slots"]`, so Cordis waits for the slot
   service before `apply`. Without it, v3.0.0 failed the client entry and v3.0.1's containment
-  catch hid the failure, leaving the app bootable but without the "多模型协作" settings section.
-- The client test asserts the `slots` dependency; 43 Node tests and 331 Python cases pass.
+  catch hid the failure, leaving the app bootable but without a "多模型协作" entry.
+- The entry moved from Settings to the right sidebar: a `sidebar.right.tab.guide.entry` card
+  and a registered right-sidebar tab open the panel with the switch, contract, optional
+  extensions and logs.
+- Optional extension installation now times out (default 120 s), cancels the host install when
+  possible, and reports the reason in the UI instead of hanging forever on an unreachable source.
+- The client test asserts the `slots` dependency and both slot registrations; 44 Node tests and
+  331 Python cases pass.
 
 ## 3.0.1 - 2026-11-10
 

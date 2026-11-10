@@ -34,7 +34,8 @@ test('client bundle is a ModuleLoader registration with matching id', () => {
   assert.match(source, /window\.__ModuleLoader__\.load\(/)
   assert.match(source, /id: "dsh-multimodel-coordination"/)
   assert.match(source, /exports\.apply = apply/)
-  assert.match(source, /settings\.section/)
+  assert.match(source, /sidebar\.right\.tab\.guide\.entry/)
+  assert.match(source, /sidebarRightTabs/)
 })
 
 test('40-rule manifest matches SKILL.md and the v2.4.0 baseline', () => {

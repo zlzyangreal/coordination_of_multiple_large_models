@@ -45,21 +45,31 @@ function ctxWith(slots) {
   return { slots }
 }
 
-test('client apply uses a string label and the package id', () => {
+test('client registers a right-sidebar tab, title and guide entry', () => {
   const loaded = loadClient()
+  const types = []
   try {
-    loaded.apply(ctxWith({
-      inject(_name, callback) { return callback() },
-      register(options, component) {
-        assert.equal(typeof options.label, 'string')
-        assert.equal(options.id, 'dsh-multimodel-coordination')
-        assert.equal(options.name, 'settings.section')
-        assert.equal(typeof component, 'function')
-        loaded.registered.push(options)
-        return () => {}
+    loaded.apply({
+      slots: {
+        inject(_name, callback) { return callback() },
+        register(options, component) {
+          assert.equal(typeof component, 'function')
+          assert.equal(options.key, 'multimodel-coordination')
+          loaded.registered.push(options)
+          return () => {}
+        },
       },
-    }))
-    assert.equal(loaded.registered.length, 1)
+      sidebarRightTabs: { register(definition) { types.push(definition); return () => {} } },
+      effect(fn) { return fn() },
+    })
+    assert.equal(types.length, 1)
+    assert.equal(types[0].kind, 'multimodel-coordination')
+    assert.equal(loaded.registered.length, 3)
+    assert.deepEqual(loaded.registered.map((item) => item.name).sort(), [
+      'sidebar.right.pane.tab',
+      'sidebar.right.pane.tab.title',
+      'sidebar.right.tab.guide.entry',
+    ])
   } finally {
     loaded.restore()
   }
@@ -99,7 +109,7 @@ test('client delayed injection callback is safe after apply settles', () => {
 test('client declares the slots service dependency', () => {
   const loaded = loadClient()
   try {
-    assert.deepEqual(loaded.inject, ['slots'])
+    assert.deepEqual(loaded.inject, ['slots', 'sidebarRightTabs'])
   } finally {
     loaded.restore()
   }
