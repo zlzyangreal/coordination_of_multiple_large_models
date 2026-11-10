@@ -1,0 +1,5 @@
+# dsh-multimodel-coordination bundle layer.
+# The row references the package by name so profile resolution finds the installed code.
+- insert:
+    - id: multimodel-coordination
+      name: dsh-multimodel-coordination

@@ -1,0 +1,8 @@
+__pycache__/
+*.pyc
+_work/
+tests/
+coordination/
+*.jsonl
+.multimodel/
+.verify-*

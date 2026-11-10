@@ -1,0 +1,10 @@
+# NOTICE
+
+- This repository is the source of the `dsh-multimodel-coordination` DSH bundle.
+- `dsh-our-free-model` is **not** included, vendored, copied or modified. It is an independently
+  installed optional DSH plugin; the bundle only declares it and talks to public host interfaces.
+- The Python engine under `scripts/`, the references and the schemas are the project's own v2.4.0
+  work. `assets/providers.registry.json` retains its own NOTICE and upstream MIT provenance
+  (`assets/providers.registry.NOTICE.md`).
+- DeepSeek Harness (DSH) is the host. No DSH source, bundle or `app.asar` content is copied into
+  this package.

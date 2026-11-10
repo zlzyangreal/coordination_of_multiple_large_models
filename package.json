@@ -1,0 +1,55 @@
+{
+  "name": "dsh-multimodel-coordination",
+  "version": "3.0.0",
+  "description": "DSH-native multi-model coordination: default-OFF global switch, forty-rule contract gate, version-locked verified activation, declared optional extensions, and local I0-I3 logs.",
+  "type": "module",
+  "main": "lib/index.js",
+  "exports": {
+    ".": "./lib/index.js",
+    "./client": "./lib/client.js",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib",
+    "skills",
+    "scripts",
+    "assets",
+    "docs",
+    "cordis.patch.yml",
+    "install.ps1",
+    "install.sh",
+    "verify.mjs",
+    "README.md",
+    "README.en.md",
+    "CHANGELOG.md",
+    "LICENSE",
+    "NOTICE",
+    "SECURITY.md"
+  ],
+  "engines": {
+    "dsh": "0.2.1-rc.3",
+    "node": ">=20"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "immediately": true,
+      "external": []
+    }
+  },
+  "scripts": {
+    "test": "node --test tests/bundle.test.mjs tests/contract.test.mjs tests/engine.test.mjs tests/state.test.mjs tests/logs.test.mjs tests/extensions.test.mjs tests/tools.test.mjs tests/smoke.test.mjs",
+    "verify": "node verify.mjs"
+  },
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "deepseek-harness",
+    "multi-model",
+    "coordination"
+  ],
+  "license": "MIT"
+}

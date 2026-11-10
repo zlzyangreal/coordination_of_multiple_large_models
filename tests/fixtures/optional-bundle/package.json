@@ -1,0 +1,12 @@
+{
+  "name": "dsh-coord-fixture-optional",
+  "version": "0.0.1",
+  "description": "Local-only fixture bundle for the optional-extension install smoke; never published.",
+  "type": "module",
+  "main": "index.js",
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  }
+}
