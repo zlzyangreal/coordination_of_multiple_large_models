@@ -1,6 +1,6 @@
 {
   "name": "dsh-multimodel-coordination",
-  "version": "3.0.0",
+  "version": "3.0.1",
   "description": "DSH-native multi-model coordination: default-OFF global switch, forty-rule contract gate, version-locked verified activation, declared optional extensions, and local I0-I3 logs.",
   "type": "module",
   "main": "lib/index.js",
@@ -41,7 +41,7 @@
     }
   },
   "scripts": {
-    "test": "node --test tests/bundle.test.mjs tests/contract.test.mjs tests/engine.test.mjs tests/state.test.mjs tests/logs.test.mjs tests/extensions.test.mjs tests/tools.test.mjs tests/smoke.test.mjs",
+    "test": "node --test tests/bundle.test.mjs tests/client.test.mjs tests/contract.test.mjs tests/engine.test.mjs tests/host-boot.test.mjs tests/state.test.mjs tests/logs.test.mjs tests/extensions.test.mjs tests/tools.test.mjs tests/smoke.test.mjs",
     "verify": "node verify.mjs"
   },
   "keywords": [

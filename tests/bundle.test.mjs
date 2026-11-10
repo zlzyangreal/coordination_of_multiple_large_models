@@ -10,7 +10,7 @@ const pkg = JSON.parse(readFileSync(path.join(root, 'package.json'), 'utf8'))
 
 test('bundle manifest is complete and dependency-free', () => {
   assert.equal(pkg.name, 'dsh-multimodel-coordination')
-  assert.equal(pkg.version, '3.0.0')
+  assert.equal(pkg.version, '3.0.1')
   assert.equal(pkg.engines.dsh, '0.2.1-rc.3')
   assert.equal(pkg.dsh.bundle.patch, './cordis.patch.yml')
   assert.equal(pkg.dsh.client.platform, 'web')
