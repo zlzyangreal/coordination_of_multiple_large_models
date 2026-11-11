@@ -1,6 +1,6 @@
 {
   "name": "dsh-multimodel-coordination",
-  "version": "3.0.2",
+  "version": "3.0.3",
   "description": "DSH-native multi-model coordination: default-OFF global switch, forty-rule contract gate, version-locked verified activation, declared optional extensions, and local I0-I3 logs.",
   "type": "module",
   "main": "lib/index.js",

@@ -1,5 +1,15 @@
 # Changelog
 
+## 3.0.3 - 2026-11-11
+
+Right-sidebar guide entry.
+
+- The right-sidebar tab definition now carries a `guide` array. `sidebarRightTabs` uses it to
+  render the "开始" card; the earlier custom `sidebar.right.tab.guide.entry` was not dispatched
+  by the owner and therefore never appeared.
+- The card opens the `multimodel-coordination` tab (switch, contract, optional extensions,
+  logs). 45 Node tests and 331 Python cases pass.
+
 ## 3.0.2 - 2026-11-10
 
 Client settings section dependency fix.
