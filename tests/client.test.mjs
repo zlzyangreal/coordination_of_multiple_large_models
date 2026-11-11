@@ -64,11 +64,12 @@ test('client registers a right-sidebar tab, title and guide entry', () => {
     })
     assert.equal(types.length, 1)
     assert.equal(types[0].kind, 'multimodel-coordination')
-    assert.equal(loaded.registered.length, 3)
+    assert.equal(types[0].guide.length, 1)
+    assert.equal(types[0].guide[0].id, 'open')
+    assert.equal(loaded.registered.length, 2)
     assert.deepEqual(loaded.registered.map((item) => item.name).sort(), [
       'sidebar.right.pane.tab',
       'sidebar.right.pane.tab.title',
-      'sidebar.right.tab.guide.entry',
     ])
   } finally {
     loaded.restore()
