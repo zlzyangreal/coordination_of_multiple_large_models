@@ -12,7 +12,7 @@ Client settings section dependency fix.
   extensions and logs.
 - Optional extension installation now times out (default 120 s), cancels the host install when
   possible, and reports the reason in the UI instead of hanging forever on an unreachable source.
-- The client test asserts the `slots` dependency and both slot registrations; 44 Node tests and
+- The client test asserts the `slots` dependency and both slot registrations; 45 Node tests and
   331 Python cases pass.
 
 ## 3.0.1 - 2026-11-10

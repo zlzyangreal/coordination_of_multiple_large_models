@@ -138,3 +138,23 @@ test('a hanging install times out, cancels and reports the reason', async () => 
   assert.equal(results[0].error, 'install_timeout')
   assert.ok(cancelled, 'the host install must be cancelled on timeout')
 })
+
+test('a cancellation that never settles cannot hold the timeout result', async () => {
+  const manager = {
+    listBundles: async () => [],
+    installBundle: () => new Promise(() => {}),
+    cancelInstall: () => new Promise(() => {}),
+  }
+  const registry = new ExtensionRegistry({
+    ctx: { get: (name) => (name === 'pluginManager' ? manager : undefined) },
+    declarations: undefined,
+    log: null,
+    state: null,
+    installTimeoutMs: 20,
+  })
+  const results = await registry.install(['dsh-our-free-model'], { confirm: true })
+  assert.equal(results[0].ok, false)
+  assert.equal(results[0].stage, 'timeout')
+  assert.equal(results[0].error, 'install_timeout')
+  assert.equal(results[0].cancelRequested, true)
+})
