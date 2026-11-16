@@ -16,6 +16,10 @@ Right-sidebar panel scrolling and busy feedback.
 - The optional-extension confirmation dialog now shows its own progress bar and “正在安装扩展…”
   label while the dialog stays open with controls disabled; completion closes the dialog and
   shows a green “已安装（仍为禁用）” notice, failure shows a red per-extension reason.
+- Extension selection is derived only from `optional` + `not_installed` + installable rows; an
+  `installed_disabled`/`enabled` row cannot be checked, its stale selection is dropped, and the
+  install count cannot include it. The duplicate “诊断” verify/enable buttons were removed; that
+  card is now a read-only “运行状态” summary.
 - 45 Node tests and 331 Python cases pass.
 
 ## 3.0.3 - 2026-11-11
