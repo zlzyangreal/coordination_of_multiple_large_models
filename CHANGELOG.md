@@ -1,5 +1,16 @@
 # Changelog
 
+## 3.0.4 - 2026-11-16
+
+Right-sidebar panel scrolling.
+
+- The panel root now uses `height: 100%`, `box-sizing: border-box` and `overflow: auto`; the
+  right-sidebar tab scrolls vertically and horizontally instead of clipping the bottom content
+  and the action column.
+- Live CDP measurement: clientHeight 390 / scrollHeight 1081, overflow auto, no horizontal
+  overflow at the normal pane width.
+- 45 Node tests and 331 Python cases pass.
+
 ## 3.0.3 - 2026-11-11
 
 Right-sidebar guide entry.
