@@ -27,6 +27,8 @@ Right-sidebar panel scrolling and busy feedback.
   profile; activation/deactivation now treat a changed profile as success and tell the user to
   restart, instead of reporting a false failure. A full app restart is required for the running
   process to drop the extension.
+- The HTTP deactivation route goes through the extension facade's `deactivate` method; the
+  smoke test asserts the route exists and does not return “deactivate is not a function”.
 - 47 Node tests and 331 Python cases pass.
 
 ## 3.0.3 - 2026-11-11

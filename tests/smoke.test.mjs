@@ -102,6 +102,14 @@ test('apply registers one section and one route when OFF; verify then ON install
     const shared = await tool.execute({ action: 'contract' }, { agent: { id: 'shared-agent' } })
     assert.equal(shared.ok, false)
     assert.match(shared.result, /session_identity_unavailable/)
+
+    const deactivateRoute = await request(route.handler, {
+      method: 'POST', url: '/_multimodel/extensions/deactivate',
+      headers: { 'content-type': 'application/json', 'x-coord-token': token },
+      body: { id: 'dsh-our-free-model', confirm: true },
+    })
+    assert.equal(deactivateRoute.status, 200, JSON.stringify(deactivateRoute.body))
+    assert.doesNotMatch(JSON.stringify(deactivateRoute.body), /not a function/)
   } finally {
     for (const effect of effects) {
       const dispose = effect()
