@@ -2,13 +2,16 @@
 
 ## 3.0.4 - 2026-11-16
 
-Right-sidebar panel scrolling.
+Right-sidebar panel scrolling and busy feedback.
 
 - The panel root now uses `height: 100%`, `box-sizing: border-box` and `overflow: auto`; the
   right-sidebar tab scrolls vertically and horizontally instead of clipping the bottom content
   and the action column.
 - Live CDP measurement: clientHeight 390 / scrollHeight 1081, overflow auto, no horizontal
   overflow at the normal pane width.
+- A global busy banner now shows a native indeterminate `<progress>` plus the current action
+  label; “验证此版本” changes to “处理中…” and stays visible for at least 600 ms, then the
+  eight verification results render. The same feedback covers toggle, install and activate.
 - 45 Node tests and 331 Python cases pass.
 
 ## 3.0.3 - 2026-11-11
