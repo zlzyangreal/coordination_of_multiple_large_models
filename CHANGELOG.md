@@ -1,5 +1,36 @@
 # Changelog
 
+## 3.0.4 - 2026-11-16
+
+Right-sidebar panel scrolling and busy feedback.
+
+- The panel root now uses `height: 100%`, `box-sizing: border-box` and `overflow: auto`; the
+  right-sidebar tab scrolls vertically and horizontally instead of clipping the bottom content
+  and the action column.
+- Live CDP measurement: clientHeight 390 / scrollHeight 1081, overflow auto, no horizontal
+  overflow at the normal pane width.
+- A global busy banner now shows a native indeterminate `<progress>` plus the current action
+  label; “验证并启用” changes to “处理中…” and stays visible for at least 600 ms, then the
+  verification result card and eight checks render. The same feedback covers toggle, install
+  and activate.
+- The optional-extension confirmation dialog now shows its own progress bar and “正在安装扩展…”
+  label while the dialog stays open with controls disabled; completion closes the dialog and
+  shows a green “已安装（仍为禁用）” notice, failure shows a red per-extension reason.
+- Extension selection is derived only from `optional` + `not_installed` + installable rows; an
+  `installed_disabled`/`enabled` row cannot be checked, its stale selection is dropped, and the
+  install count cannot include it. The duplicate “诊断” verify/enable buttons were removed; that
+  card is now a read-only “运行状态” summary.
+- An enabled extension now has a “停用” action with confirmation. Deactivation calls
+  `setBundleEnabled(id, false)`, logs `extension.deactivated` at I2, keeps the files and
+  Profile entry, returns to `installed_disabled`, and is idempotent.
+- On a desktop process without HMR the host returns `restart-required` after writing the
+  profile; activation/deactivation now treat a changed profile as success and tell the user to
+  restart, instead of reporting a false failure. A full app restart is required for the running
+  process to drop the extension.
+- The HTTP deactivation route goes through the extension facade's `deactivate` method; the
+  smoke test asserts the route exists and does not return “deactivate is not a function”.
+- 47 Node tests and 331 Python cases pass.
+
 ## 3.0.3 - 2026-11-11
 
 Right-sidebar guide entry.
