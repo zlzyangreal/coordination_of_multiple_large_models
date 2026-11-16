@@ -180,3 +180,20 @@ test('deactivate disables an enabled extension and is idempotent', async () => {
   assert.equal(again.ok, true)
   assert.equal(again.already, true)
 })
+
+test('deactivate treats a restart-required profile write as success', async () => {
+  const manager = {
+    listBundles: async () => [{ name: 'dsh-our-free-model', enabled: true, version: '2.8.5', availability: 'profile' }],
+    setBundleEnabled: async () => ({ application: 'restart-required', changed: true, restartReason: 'no-hmr' }),
+  }
+  const registry = new ExtensionRegistry({
+    ctx: { get: (name) => (name === 'pluginManager' ? manager : undefined) },
+    declarations: undefined,
+    log: null,
+    state: null,
+  })
+  const result = await registry.deactivate('dsh-our-free-model', { confirm: true })
+  assert.equal(result.ok, true)
+  assert.equal(result.restartRequired, true)
+  assert.equal(result.status, 'restart-required')
+})

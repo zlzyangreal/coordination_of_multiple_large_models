@@ -23,7 +23,11 @@ Right-sidebar panel scrolling and busy feedback.
 - An enabled extension now has a “停用” action with confirmation. Deactivation calls
   `setBundleEnabled(id, false)`, logs `extension.deactivated` at I2, keeps the files and
   Profile entry, returns to `installed_disabled`, and is idempotent.
-- 46 Node tests and 331 Python cases pass.
+- On a desktop process without HMR the host returns `restart-required` after writing the
+  profile; activation/deactivation now treat a changed profile as success and tell the user to
+  restart, instead of reporting a false failure. A full app restart is required for the running
+  process to drop the extension.
+- 47 Node tests and 331 Python cases pass.
 
 ## 3.0.3 - 2026-11-11
 
