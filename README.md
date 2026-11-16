@@ -3,7 +3,7 @@
 用于 **2 个及以上大模型协作** 的调度与对接：谁负责、怎么交接、评审结论怎么判断可信、出错怎么退。只管协作机制——代码、文档、数据、方案都适用；代码风格、写作、排版属于项目自己的事实包与 DoD，不写进这里。
 
 - 仓库：<https://github.com/zlzyangreal/coordination_of_multiple_large_models>
-- 版本：3.0.4（2026-11-16）
+- 版本：3.0.5（2026-11-16）
 - 当前离线自测：331 项（mock providers，不联网）
 - 上一代：`多模型协作Spec.md` v2.4.1，已冻结，仅作留档
 
@@ -98,6 +98,7 @@ New-Item -ItemType Junction `
 
 | 版本 | 日期 | 变更 |
 |---|---|---|
+| 3.0.5 | 2026-11-16 | Patch: the mandate no longer carries a wall-clock minute budget; only the call budget is enforced.；331 项离线自测 |
 | 3.0.4 | 2026-11-16 | v3.0.4：右侧栏滚动、验证并启用与进度反馈、扩展安装进度/结果、已启用扩展不可再选并可停用、诊断改为运行状态；47 项 Node 测试、331 项离线自测 |
 | 3.0.3 | 2026-11-11 | v3.0.3：右侧栏 tab 定义补 guide 数组，开始页出现多模型协作卡片；45 项 Node 测试、331 项离线自测 |
 | 3.0.2 | 2026-11-11 | v3.0.2：客户端补齐 slots/sidebarRightTabs 依赖；入口改为右侧栏 tab + guide entry；可选扩展安装增加 120s 超时与异步取消，失败可诊断；45 项 Node 测试、331 项离线自测 |
