@@ -20,7 +20,10 @@ Right-sidebar panel scrolling and busy feedback.
   `installed_disabled`/`enabled` row cannot be checked, its stale selection is dropped, and the
   install count cannot include it. The duplicate “诊断” verify/enable buttons were removed; that
   card is now a read-only “运行状态” summary.
-- 45 Node tests and 331 Python cases pass.
+- An enabled extension now has a “停用” action with confirmation. Deactivation calls
+  `setBundleEnabled(id, false)`, logs `extension.deactivated` at I2, keeps the files and
+  Profile entry, returns to `installed_disabled`, and is idempotent.
+- 46 Node tests and 331 Python cases pass.
 
 ## 3.0.3 - 2026-11-11
 

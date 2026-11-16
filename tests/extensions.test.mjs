@@ -158,3 +158,25 @@ test('a cancellation that never settles cannot hold the timeout result', async (
   assert.equal(results[0].error, 'install_timeout')
   assert.equal(results[0].cancelRequested, true)
 })
+
+test('deactivate disables an enabled extension and is idempotent', async () => {
+  let enabled = true
+  const manager = {
+    listBundles: async () => [{ name: 'dsh-our-free-model', enabled, version: '2.8.5', availability: 'profile' }],
+    setBundleEnabled: async (_name, value) => { enabled = value; return { application: 'applied' } },
+  }
+  const registry = new ExtensionRegistry({
+    ctx: { get: (name) => (name === 'pluginManager' ? manager : undefined) },
+    declarations: undefined,
+    log: null,
+    state: null,
+  })
+  await assert.rejects(() => registry.deactivate('dsh-our-free-model', { confirm: false }), /confirm/)
+  const result = await registry.deactivate('dsh-our-free-model', { confirm: true })
+  assert.equal(result.ok, true)
+  assert.equal(result.status, 'installed_disabled')
+  assert.equal(enabled, false)
+  const again = await registry.deactivate('dsh-our-free-model', { confirm: true })
+  assert.equal(again.ok, true)
+  assert.equal(again.already, true)
+})
