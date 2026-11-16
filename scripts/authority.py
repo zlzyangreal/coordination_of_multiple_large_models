@@ -698,8 +698,6 @@ def command_init(project, args):
         raise GovernanceError(4, "governance is already initialized; use --force deliberately")
     if args.gpt_calls is not None and args.gpt_calls < 0:
         raise GovernanceError(2, "--gpt-calls must be non-negative")
-    if args.minutes is not None and args.minutes < 0:
-        raise GovernanceError(2, "--minutes must be non-negative")
     hard = [{"id": "HC-%d" % (index + 1), "text": value}
             for index, value in enumerate(args.hard_constraint)]
     preferences = [_preference(value, index + 1)
@@ -710,7 +708,7 @@ def command_init(project, args):
         "models": _split_values(args.model),
         "plugins": _split_values(args.plugin),
         "ops": _split_values(args.op),
-        "budgets": {"gpt_calls": args.gpt_calls, "minutes": args.minutes},
+        "budgets": {"gpt_calls": args.gpt_calls},
     }
     mandate = {
         "schema": SCHEMA,
@@ -1545,15 +1543,6 @@ def reserve(project, agent, grant_chain, calls, request_id, op):
         total = sum(int(row.get("calls", 0)) for row in usage)
         if mandate_max is not None and total + calls > int(mandate_max):
             raise GovernanceError(4, "mandate call budget is exhausted")
-        minute_max = ((_scope(mandate).get("budgets") or {}).get("minutes"))
-        if minute_max is not None:
-            started = _parse_iso(mandate.get("created_at") or mandate.get("updated_at"))
-            if started:
-                if started.tzinfo is None:
-                    started = started.astimezone()
-                elapsed = (datetime.now().astimezone() - started).total_seconds() / 60.0
-                if elapsed >= float(minute_max):
-                    raise GovernanceError(4, "mandate minute budget is exhausted")
         identifier = _new_id("U")
         row = {
             "seq": len(usage) + 1, "at": common.now_iso(), "id": identifier,
@@ -2210,7 +2199,6 @@ def build_parser():
     p.add_argument("--plugin", action="extend", nargs="+", default=[])
     p.add_argument("--op", action="extend", nargs="+", default=[])
     p.add_argument("--gpt-calls", type=int, default=None)
-    p.add_argument("--minutes", type=int, default=None)
     p.add_argument("--strictness", choices=["low", "normal", "high"], default="normal")
     p.add_argument("--force", action="store_true")
     _add_json(p)
