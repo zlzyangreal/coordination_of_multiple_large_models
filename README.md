@@ -4,7 +4,7 @@
 
 - 仓库：<https://github.com/zlzyangreal/coordination_of_multiple_large_models>
 - 版本：3.2.0（2026-11-17）
-- 当前离线自测：373 项（mock providers，不联网）；Node 测试 90 项
+- 当前离线自测：373 项（mock providers，不联网）；Node 测试 94 项
 - 上一代：`多模型协作Spec.md` v2.4.1，已冻结，仅作留档
 
 ## 版本核心
@@ -18,6 +18,7 @@
 - `GET /_multimodel/workflow/options?task=&node=`：逐条 `eligible/code/rule/reason`。
 - `scripts/families.py`：项目 `overrides.<model>.family` > 随包 `assets/families.json` > unknown（未知不算独立评审）。
 - `scripts/eligibility.py`：同族/同模型/家族未知/团队拒绝的判定，供面板与服务端共用。
+- 版本审核：待验证卡片提供「✓ 通过并启用 / ✗ 不通过」一键结论；通过记录 `verification{decision,by,note,version,digest,at}`，不通过写 I1 `verify.rejected` 并保持未验证。
 
 ### 3.1.0 协作工作流：可执行编排 + 实时可视化 + 节点模型切换
 
@@ -120,7 +121,7 @@ New-Item -ItemType Junction `
 
 | 版本 | 日期 | 变更 |
 |---|---|---|
-| 3.2.0 | 2026-11-17 | v3.2.0 工作流面板：`GET /workflow/boards` 多任务索引、`/workflow/events?tasks=all` 增量 SSE（revision 闸门，未变不跑 Python）、快照 `activity`（当前/阻塞/最近事件）、卡片网格同页并列；`/models` 增 `groups/favorites/recent`，面板改可输入 combobox；`scripts/families.py` + `scripts/eligibility.py` + `GET /workflow/options` 规则闸门（同族/同模型/家族未知禁用并写理由，`pin`/`assign` 422 `rule_violation`）；板根优先 workspaceRegistry；90 项 Node 测试 |
+| 3.2.0 | 2026-11-17 | v3.2.0 工作流面板：`GET /workflow/boards` 多任务索引、`/workflow/events?tasks=all` 增量 SSE（revision 闸门，未变不跑 Python）、快照 `activity`（当前/阻塞/最近事件）、卡片网格同页并列；`/models` 增 `groups/favorites/recent`，面板改可输入 combobox；`scripts/families.py` + `scripts/eligibility.py` + `GET /workflow/options` 规则闸门（同族/同模型/家族未知禁用并写理由，`pin`/`assign` 422 `rule_violation`）；板根优先 workspaceRegistry；版本审核改为一键「通过并启用 / 不通过」并记录结论；94 项 Node 测试 |
 | 3.1.0 | 2026-11-17 | v3.1.0 协作工作流：`scripts/orchestration.py`（T1–T11、I1–I8、手动模型优先、独立评审、返工、交付门禁、回执链）、`lib/workflow.js` 与 `/_multimodel/workflow*`（SSE、模型目录、`subagent` 派发校验）、右侧栏工作流视图与节点模型切换、`docs/workflow.md`；78 项 Node 测试、373 项离线自测 |
 | 3.0.5 | 2026-11-16 | Patch: the mandate no longer carries a wall-clock minute budget; only the call budget is enforced.；331 项离线自测 |
 | 3.0.4 | 2026-11-16 | v3.0.4：右侧栏滚动、验证并启用与进度反馈、扩展安装进度/结果、已启用扩展不可再选并可停用、诊断改为运行状态；47 项 Node 测试、331 项离线自测 |

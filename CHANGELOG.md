@@ -18,6 +18,10 @@ Workflow panel: every board at once, a typed model picker, and rule-disabled opt
   在 Node 侧同判并返回 **422 `rule_violation`**，不依赖 UI。
 - **项目根**：板根优先取宿主 `workspaceRegistry` 中的工作区，取不到退回进程 cwd（旧行为）。
   `workflow`/`boards`/`tasks`/`options`/`events`/`models` 均接受 `?project=`。
+- **一键审核**：待验证卡片改为「✓ 通过并启用 / ✗ 不通过」。通过 = 跑完整检查并启用，状态写入
+  `verification:{decision:"pass", by, note, version, digest, at}`；不通过 = 记录原因、保持未验证、
+  关闭受限模式，并写一条 I1 `verify.rejected` 日志（通过写 I2 `verify.approved`）。`/status`
+  返回 `verification`，面板显示上次审核结论与原因。
 
 ## 3.1.0 - 2026-11-17
 
