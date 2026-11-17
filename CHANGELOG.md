@@ -5,22 +5,28 @@
 Collaboration workflow: an executable board, a live graph, and per-node model switching.
 
 - `scripts/orchestration.py` is the deterministic board: schema 1 in
-  `_work/orchestration/<task>.json`, revision CAS on every mutation, transitions T1–T11, and
-  invariants I1–I8. A producer never reaches `done` on its own result — it reaches `review`, and
-  only an independent review with `verdict pass` **at the current attempt** completes it (I6). A
-  failed review returns the producer to `rework`, clears the stale result and verdict, increments
-  the attempt, and re-enters the review (T10 → T5 → T3 → T7 → T8 → T9).
+  `_work/orchestration/<task>.json`, revision CAS under a per-board cross-process lock, transitions
+  T1–T11 (including `fail` for T4), and invariants I1–I8. A producer never reaches `done` on its
+  own result — it reaches `review`, and only an independent review with `verdict pass` **at the
+  current attempt** completes it (I6). A failed review returns the producer to `rework`, clears the
+  stale result and verdict, increments the attempt, and re-enters the review
+  (T10 → T5 → T3 → T7 → T8 → T9).
 - Manual model assignment outranks automation: `pin` sets `source:"manual"`, `assign` refuses to
-  overwrite it (I4), and a result must carry the child model that was actually assigned (I8).
-- Delivery is a gate, not a formality: every node must be `done`, no node may be in
-  `review`/`rework`/`failed`, no `high`/`medium` finding may be open, and the receipt hash chain
-  outside the project must verify. Empty boards and boards without a review node are refused at
-  `plan` time, so a vacuous delivery is impossible.
-- `lib/workflow.js` bridges the board: fixed argv into the Python CLI, receipt chain in
-  `$DSH_HOME/coordination/orchestration/<project-key>/`, SSE snapshots with a 1 s tick fallback
-  (`fs.watch` creation is contained, re-armed on `rename`, `unref`'d and disposed with the
-  lifecycle), the live `ctx.llm` model catalog, and `subagent.listChildren` verification of a
-  claimed child and its model.
+  overwrite it (I4), assignment is locked once a node leaves `pending`/`ready`/`rework`, and a
+  result must carry the child model that was actually assigned (I8).
+- Delivery is a gate, not a formality: the task must be in `reviewing`, every node `done`, no node
+  in `review`/`rework`/`failed`, no `high`/`medium` finding open, each producer covered by its own
+  passing review at the current attempt, and the receipt hash chain must verify. Empty boards and
+  boards without a review node are refused at `plan` time, so a vacuous delivery is impossible.
+- Receipts are per task (`<project-key>/<task>.jsonl`); every mutation first verifies that the
+  current tip matches the bytes it is about to change, so an out-of-band edit cannot be re-blessed
+  by a later legitimate operation, and one board's mutation cannot stale another board's chain.
+- `lib/workflow.js` bridges the board: fixed argv into the Python CLI, a per-task receipt stream in
+  `$DSH_HOME/coordination/orchestration/<project-key>/`, SSE snapshots (`{ok, task, chain}`) with a
+  1 s tick fallback (`fs.watch` creation is contained, re-armed on `rename`, `unref`'d and disposed
+  with the lifecycle), the live `ctx.llm` model catalog, one result-admission policy shared by the
+  tool and the HTTP route (`subagent.listChildren` must confirm the child **and** its model), and
+  `headCommit()` for UI-driven delivery.
 - `/_multimodel/workflow`, `/workflow/events`, `/models`, `/workflow/pin` and `/workflow/node` sit
   behind the existing origin + CSRF checks; the `coordination` tool gains `action:"workflow"` with
   nine ops. When the `llm` or `subagent` service is absent the bridge says so and degrades — it
@@ -31,7 +37,7 @@ Collaboration workflow: an executable board, a live graph, and per-node model sw
   back to a 5 s poll and a `轮询` pill after two stream errors.
 - `docs/workflow.md` documents the model, transitions, invariants, routes and the residual risk
   that a local administrator can rewrite the board and the receipts.
-- 73 Node tests (47 existing + 17 bridge + 9 client layout) and 364 Python cases pass; `verify.mjs`,
+- 78 Node tests (47 existing + 22 bridge + 9 client layout) and 369 Python cases pass; `verify.mjs`,
   `check_docs.py` and `check_rules.py` pass.
 
 ## 3.0.4 - 2026-11-16

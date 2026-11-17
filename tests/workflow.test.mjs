@@ -80,7 +80,7 @@ test('workflow: result maps child fields and the no-subagent flag to fixed argv'
   const root = await workspace()
   const calls = []
   const bridge = new WorkflowBridge({ ctx: {}, engine: engineReturning({ ok: true, code: 0, message: 'ok' }, calls), projectRoot: root, homeRoot: root, root })
-  await bridge.run('result', {
+  await bridge.invoke('result', {
     task: 't1', node: 'n1', summary: 'done', child_session: 'c1', child_model: 'm1',
     no_subagent: true, expected_revision: 2,
   })
@@ -213,7 +213,8 @@ test('workflow: subscribe emits SSE headers and an initial frame', async () => {
   assert.ok(await waitFor(() => res.chunks.some((chunk) => chunk.startsWith('data: '))),
     `no initial frame within 2s: ${JSON.stringify(res.chunks)}`)
   const frame = JSON.parse(res.chunks.find((chunk) => chunk.startsWith('data: ')).slice(6))
-  assert.equal(frame.task_id, 't1')
+  assert.equal(frame.ok, true)
+  assert.equal(frame.task.task_id, 't1')
   await bridge.close()
   await rm(root, { recursive: true, force: true })
 })
@@ -281,6 +282,78 @@ test('workflow: verifyChild accepts the assigned model', async () => {
   const value = await bridge.verifyChild('s1', 'c1', 'm1')
   assert.equal(value.ok, true)
   assert.equal(value.verified, true)
+  await bridge.close()
+  await rm(root, { recursive: true, force: true })
+})
+
+test('workflow: verifyChild treats a child without a reported model as unverified', async () => {
+  const root = await workspace()
+  const subagent = { listChildren: async () => [{ childId: 'c1' }] }
+  const bridge = new WorkflowBridge({
+    ctx: { get: (name) => (name === 'subagent' ? subagent : undefined) },
+    engine: engineReturning({ ok: true }), projectRoot: root, homeRoot: root, root,
+  })
+  const value = await bridge.verifyChild('s1', 'c1', 'm1')
+  assert.equal(value.ok, false)
+  assert.equal(value.verified, false)
+  assert.match(value.reason, /no model/)
+  await bridge.close()
+  await rm(root, { recursive: true, force: true })
+})
+
+test('workflow: a result without a parent session is refused before python runs', async () => {
+  const root = await workspace()
+  const calls = []
+  const subagent = { listChildren: async () => [{ childId: 'c1', model: 'm1' }] }
+  const bridge = new WorkflowBridge({
+    ctx: { get: (name) => (name === 'subagent' ? subagent : undefined) },
+    engine: engineReturning({ ok: true }, calls), projectRoot: root, homeRoot: root, root,
+  })
+  const value = await bridge.run('result', { task: 't1', node: 'n1', child_session: 'c1', child_model: 'm1' })
+  assert.equal(value.ok, false)
+  assert.match(value.message, /dispatch_unverified/)
+  assert.equal(calls.length, 0)
+  await bridge.close()
+  await rm(root, { recursive: true, force: true })
+})
+
+test('workflow: the artifact path is refused while a subagent service exists', async () => {
+  const root = await workspace()
+  const calls = []
+  const subagent = { listChildren: async () => [] }
+  const bridge = new WorkflowBridge({
+    ctx: { get: (name) => (name === 'subagent' ? subagent : undefined) },
+    engine: engineReturning({ ok: true }, calls), projectRoot: root, homeRoot: root, root,
+  })
+  const value = await bridge.run('result', { task: 't1', node: 'n1', artifact: 'a.md', no_subagent: true })
+  assert.equal(value.ok, false)
+  assert.match(value.message, /artifact results are allowed only/)
+  assert.equal(calls.length, 0)
+  await bridge.close()
+  await rm(root, { recursive: true, force: true })
+})
+
+test('workflow: the artifact path is admitted when no subagent service exists', async () => {
+  const root = await workspace()
+  const calls = []
+  const bridge = new WorkflowBridge({
+    ctx: { get: () => undefined },
+    engine: engineReturning({ ok: true, code: 0, message: 'ok' }, calls),
+    projectRoot: root, homeRoot: root, root,
+  })
+  const value = await bridge.run('result', { task: 't1', node: 'n1', artifact: 'a.md', no_subagent: true })
+  assert.equal(value.ok, true)
+  assert.equal(calls.length, 1)
+  await bridge.close()
+  await rm(root, { recursive: true, force: true })
+})
+
+test('workflow: a result with neither child nor artifact is refused', async () => {
+  const root = await workspace()
+  const bridge = new WorkflowBridge({ ctx: { get: () => undefined }, engine: engineReturning({ ok: true }), projectRoot: root, homeRoot: root, root })
+  const value = await bridge.run('result', { task: 't1', node: 'n1' })
+  assert.equal(value.ok, false)
+  assert.match(value.message, /verified child or an artifact receipt/)
   await bridge.close()
   await rm(root, { recursive: true, force: true })
 })

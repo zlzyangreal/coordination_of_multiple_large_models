@@ -27,7 +27,7 @@ NODE_STATUSES = {"pending", "ready", "running", "review", "rework", "done", "fai
 LANES = {"dsh", "codex", "http"}
 BLOCKING_SEVERITIES = {"high", "medium"}
 CLOSED_FINDING_STATUSES = {"fixed", "accepted"}
-MUTATING_OPS = {"init", "plan", "assign", "pin", "start", "result", "review", "deliver"}
+MUTATING_OPS = {"init", "plan", "assign", "pin", "start", "result", "review", "fail", "deliver"}
 
 
 class BoardError(Exception):
@@ -105,6 +105,47 @@ def _receipt_path(project: str, value: str | None) -> str | None:
     if not isinstance(value, str) or not value.strip():
         raise BoardError(2, "--receipts must not be empty")
     return _norm(value if os.path.isabs(value) else os.path.join(_project_root(project), value))
+
+
+class _BoardLock:
+    """Cross-process exclusive lock over one board, held across read/validate/write/receipt."""
+
+    def __init__(self, project: str, task_id: str, timeout: float = 15.0, poll: float = 0.05):
+        _validate_task_id(task_id)
+        root = _project_root(project)
+        self.path = os.path.join(root, BOARD_DIR, "." + task_id + ".lock")
+        self.timeout = timeout
+        self.poll = poll
+        self.handle: int | None = None
+
+    def __enter__(self) -> "_BoardLock":
+        import time
+
+        deadline = time.monotonic() + self.timeout
+        os.makedirs(os.path.dirname(self.path), exist_ok=True)
+        while True:
+            try:
+                self.handle = os.open(self.path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+                os.write(self.handle, str(os.getpid()).encode("ascii"))
+                return self
+            except FileExistsError:
+                if time.monotonic() >= deadline:
+                    raise BoardError(3, "board is locked by another writer") from None
+                time.sleep(self.poll)
+
+    def __exit__(self, exc_type: Any, exc: Any, traceback: Any) -> None:
+        if self.handle is not None:
+            try:
+                os.close(self.handle)
+            except OSError:
+                pass
+            self.handle = None
+        try:
+            os.unlink(self.path)
+        except OSError:
+            pass
+        return None
+
 
 
 def _read_json(path: str, description: str) -> Any:
@@ -259,6 +300,9 @@ def _recompute_status(board: dict[str, Any]) -> None:
         board["status"] = "delivered"
     elif any(node.get("status") == "failed" for node in nodes):
         board["status"] = "failed"
+    elif nodes and all(node.get("status") == "done" for node in nodes):
+        # T11's source state: every node is done, delivery is still pending.
+        board["status"] = "reviewing"
     elif any(node.get("status") in {"review", "rework"} for node in nodes):
         board["status"] = "reviewing"
     elif any(node.get("status") in {"running", "ready"} for node in nodes):
@@ -635,6 +679,28 @@ def apply_op(
     receipts: str | None = None,
     **options: Any,
 ) -> dict[str, Any]:
+    """Acquire the board lock, then apply exactly one mutating operation."""
+
+    with _BoardLock(project, task):
+        return _apply_op(
+            op,
+            project,
+            task,
+            expected_revision=expected_revision,
+            receipts=receipts,
+            **options,
+        )
+
+
+def _apply_op(
+    op: str,
+    project: str,
+    task: str,
+    *,
+    expected_revision: int | None,
+    receipts: str | None = None,
+    **options: Any,
+) -> dict[str, Any]:
     """Apply and persist one mutating operation, returning the new board."""
 
     if op not in MUTATING_OPS:
@@ -678,6 +744,17 @@ def apply_op(
         _validate_invariants(board)
         if board.get("delivery", {}).get("delivered_at"):
             raise BoardError(3, "delivered boards are immutable")
+        if receipt_path is not None:
+            # Never re-bless a board that was edited outside this process: the tip must
+            # already match the bytes we are about to mutate.
+            chain = _chain_status(receipt_path, _board_bytes(root, board))
+            if chain != "ok":
+                chain_error = "missing" if chain == "missing" else (
+                    "broken" if chain == "broken" else "stale"
+                )
+                raise BoardError(
+                    4, f"receipt chain is {chain_error} before {op}", {"chain": chain_error}
+                )
 
         if op == "plan":
             if board.get("status") != "planning":
@@ -693,6 +770,11 @@ def apply_op(
 
         elif op in {"assign", "pin"}:
             node = _get_node(board, options.get("node", ""))
+            if node.get("status") not in {"pending", "ready", "rework"}:
+                raise BoardError(
+                    4,
+                    f"assignment of {node['id']} is locked in status {node.get('status')}",
+                )
             if op == "assign" and node.get("assignee", {}).get("source") == "manual":
                 raise BoardError(4, "manual assignment can only be changed by pin")
             by = options.get("by") if op == "pin" else None
@@ -841,6 +923,17 @@ def apply_op(
                 at,
             )
 
+        elif op == "fail":
+            node = _get_node(board, options.get("node", ""))
+            if node.get("status") != "running":
+                raise BoardError(3, "only a running node can fail")
+            reason = options.get("reason")
+            if not isinstance(reason, str) or not reason.strip():
+                raise BoardError(2, "--reason must not be empty")
+            node["status"] = "failed"
+            node["updated_at"] = at
+            _finish_mutation(board, op, f"node={node['id']} reason={reason}", at)
+
         elif op == "deliver":
             if receipt_path is None:
                 raise BoardError(4, "delivery requires receipts", {"chain": "missing"})
@@ -849,10 +942,21 @@ def apply_op(
             if chain != "ok":
                 chain_error = "missing" if chain == "missing" else ("broken" if chain == "broken" else "stale")
                 raise BoardError(4, f"receipt chain is {chain_error}", {"chain": chain_error})
+            if board.get("status") != "reviewing":
+                raise BoardError(3, f"deliver requires the reviewing state (now {board.get('status')})")
             if not _i7_ready(board) or any(
                 node.get("status") in {"review", "rework", "failed"} for node in board.get("nodes", [])
             ):
                 raise BoardError(4, "delivery gate is not satisfied")
+            for node in board.get("nodes", []):
+                if node.get("kind") not in {"work", "integrate"}:
+                    continue
+                result = node.get("result") or {}
+                assignee = node.get("assignee") or {}
+                if result.get("child_model") and assignee.get("model") and result["child_model"] != assignee["model"]:
+                    raise BoardError(
+                        4, f"node {node['id']} result does not match its current assignment"
+                    )
             commit = options.get("commit")
             if not isinstance(commit, str) or not commit:
                 raise BoardError(2, "--commit must not be empty")
@@ -922,6 +1026,11 @@ def _parser() -> argparse.ArgumentParser:
     review.add_argument("--verdict", required=True, choices=("pass", "fail"))
     review.add_argument("--findings-file")
     review.add_argument("--by")
+
+    fail = subparsers.add_parser("fail")
+    _add_common(fail, mutating=True)
+    fail.add_argument("--node", required=True)
+    fail.add_argument("--reason", required=True)
 
     deliver = subparsers.add_parser("deliver")
     _add_common(deliver, mutating=True, receipts_required=True)

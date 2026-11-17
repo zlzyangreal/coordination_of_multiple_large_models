@@ -2902,7 +2902,16 @@ def orchestration_cases(env, work):
     def call(*args, receipts_path=True):
         argv = [sys.executable, orch, args[0], "--project", project] + list(args[1:])
         if receipts_path:
-            argv += ["--receipts", receipts if receipts_path is True else receipts_path]
+            task_id = None
+            for index, item in enumerate(argv):
+                if item == "--task" and index + 1 < len(argv):
+                    task_id = argv[index + 1]
+            if receipts_path is True:
+                # One receipt stream per task, so two boards cannot invalidate each other.
+                target = os.path.join(work, "orch-receipts-%s.jsonl" % (task_id or "default"))
+            else:
+                target = receipts_path
+            argv += ["--receipts", target]
         argv.append("--json")
         done = subprocess.run(argv, capture_output=True, text=True, env=env,
                               encoding="utf-8", errors="replace", timeout=120)
@@ -3087,7 +3096,7 @@ def orchestration_cases(env, work):
     with open(tamper_board, "w", encoding="utf-8") as fh:
         json.dump(copied, fh)
     tampered = os.path.join(work, "orch-tamper.jsonl")
-    shutil.copyfile(receipts, tampered)
+    shutil.copyfile(os.path.join(work, "orch-receipts-t-main.jsonl"), tampered)
     with open(tamper_board, "a", encoding="utf-8") as fh:
         fh.write("\n")
     code, payload = call("deliver", "--task", "t-tamper", "--commit", "abc1234",
@@ -3106,7 +3115,7 @@ def orchestration_cases(env, work):
          "--expected-revision", "1")
     code, payload = call("deliver", "--task", "t-gate", "--commit", "abc1234",
                          "--expected-revision", str(revision("t-gate")))
-    check("orchestration: I7 blocks delivery while a node is still pending", code == 4,
+    check("orchestration: I7 blocks delivery while a node is still pending", code in (3, 4),
           f"{code} {payload}")
 
     zero_review = [{"id": "solo", "title": "solo", "kind": "work", "depends_on": [],
@@ -3183,6 +3192,69 @@ def orchestration_cases(env, work):
     check("orchestration: state reports progress and a chain verdict",
           code == 0 and "progress" in payload.get("task", {})
           and payload["task"].get("chain") == "ok", payload.get("task", {}).get("chain"))
+
+    # --- T4 fail, assignment lock, T11 source state -------------------------
+    call("init", "--task", "t-fail", "--title", "fail", "--expected-revision", "0")
+    call("plan", "--task", "t-fail", "--nodes-file", write_json("orch-fail.json", nodes()),
+         "--expected-revision", "1")
+    call("start", "--task", "t-fail", "--node", "p1",
+         "--expected-revision", str(revision("t-fail")))
+    code, payload = call("pin", "--task", "t-fail", "--node", "p1", "--lane", "dsh",
+                         "--provider", "d", "--model", "late-model", "--by", "user",
+                         "--expected-revision", str(revision("t-fail")))
+    check("orchestration: assignment is locked once a node is running", code == 4,
+          f"{code} {payload}")
+    code, _payload = call("fail", "--task", "t-fail", "--node", "p1",
+                          "--reason", "provider outage",
+                          "--expected-revision", str(revision("t-fail")))
+    check("orchestration: T4 fails a running node and the task",
+          code == 0 and node("t-fail", "p1").get("status") == "failed"
+          and task("t-fail").get("status") == "failed",
+          f"{code} {node('t-fail', 'p1')} {task('t-fail').get('status')}")
+
+    call("init", "--task", "t-plan", "--title", "plan", "--expected-revision", "0")
+    call("plan", "--task", "t-plan", "--nodes-file", write_json("orch-plan.json", nodes()),
+         "--expected-revision", "1")
+    code, payload = call("deliver", "--task", "t-plan", "--commit", "abc1234",
+                         "--expected-revision", str(revision("t-plan")))
+    check("orchestration: T11 refuses to deliver a board that is still planning", code == 3,
+          f"{code} {payload}")
+
+    # --- per-task receipt streams stay independent --------------------------
+    call("init", "--task", "t-two", "--title", "two", "--expected-revision", "0")
+    call("plan", "--task", "t-two", "--nodes-file", write_json("orch-two.json", nodes()),
+         "--expected-revision", "1")
+    call("pin", "--task", "t-two", "--node", "p1", "--lane", "dsh", "--provider", "d",
+         "--model", "other", "--by", "user", "--expected-revision", str(revision("t-two")))
+    check("orchestration: mutating one board does not stale another board's chain",
+          task("t-main").get("chain") == "ok" and task("t-two").get("chain") == "ok",
+          f"{task('t-main').get('chain')} {task('t-two').get('chain')}")
+
+    # --- concurrent writers: one CAS winner --------------------------------
+    call("init", "--task", "t-race", "--title", "race", "--expected-revision", "0")
+    call("plan", "--task", "t-race", "--nodes-file", write_json("orch-race.json", nodes()),
+         "--expected-revision", "1")
+    race_revision = revision("t-race")
+    race_receipts = os.path.join(work, "orch-receipts-t-race.jsonl")
+    base = [sys.executable, orch]
+    first = subprocess.Popen(
+        base + ["pin", "--task", "t-race", "--project", project, "--expected-revision",
+                str(race_revision), "--receipts", race_receipts, "--json",
+                "--node", "p1", "--lane", "dsh", "--provider", "d", "--model", "race-a",
+                "--by", "user"],
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env, text=True,
+        encoding="utf-8", errors="replace")
+    second = subprocess.Popen(
+        base + ["assign", "--task", "t-race", "--project", project, "--expected-revision",
+                str(race_revision), "--receipts", race_receipts, "--json",
+                "--node", "p1", "--lane", "dsh", "--provider", "d", "--model", "race-b"],
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env, text=True,
+        encoding="utf-8", errors="replace")
+    first_code = first.wait(timeout=60)
+    second_code = second.wait(timeout=60)
+    outcomes = sorted([first_code, second_code])
+    check("orchestration: two writers at the same revision get one winner and one exit 3",
+          outcomes == [0, 3], outcomes)
 
 
 if __name__ == "__main__":
