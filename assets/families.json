@@ -1,0 +1,25 @@
+{
+  "schema": 1,
+  "note": "Ordered family rules for model slugs. First match wins; project overrides.<model>.family beats this table.",
+  "rules": [
+    { "pattern": "deepseek", "family": "deepseek" },
+    { "pattern": "qwen", "family": "qwen" },
+    { "pattern": "glm|z-ai/", "family": "glm" },
+    { "pattern": "minimax", "family": "minimax" },
+    { "pattern": "step-", "family": "stepfun" },
+    { "pattern": "gemma", "family": "google" },
+    { "pattern": "gpt-oss|openai/", "family": "openai" },
+    { "pattern": "mimo", "family": "xiaomi" },
+    { "pattern": "nemotron", "family": "nvidia" },
+    { "pattern": "minicpm", "family": "openbmb" },
+    { "pattern": "big-pickle", "family": "bigpickle" },
+    { "pattern": "iceman", "family": "iceman" },
+    { "pattern": "inkling", "family": "inkling" },
+    { "pattern": "beam", "family": "beam" },
+    { "pattern": "flint", "family": "flint" },
+    { "pattern": "longcat", "family": "longcat" },
+    { "pattern": "hy4", "family": "tencent" },
+    { "pattern": "opencode/", "family": "opencode" },
+    { "pattern": "claude|anthropic", "family": "anthropic" }
+  ]
+}

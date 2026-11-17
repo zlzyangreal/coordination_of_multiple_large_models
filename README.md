@@ -3,11 +3,21 @@
 用于 **2 个及以上大模型协作** 的调度与对接：谁负责、怎么交接、评审结论怎么判断可信、出错怎么退。只管协作机制——代码、文档、数据、方案都适用；代码风格、写作、排版属于项目自己的事实包与 DoD，不写进这里。
 
 - 仓库：<https://github.com/zlzyangreal/coordination_of_multiple_large_models>
-- 版本：3.1.0（2026-11-17）
-- 当前离线自测：373 项（mock providers，不联网）；Node 测试 78 项
+- 版本：3.2.0（2026-11-17）
+- 当前离线自测：373 项（mock providers，不联网）；Node 测试 90 项
 - 上一代：`多模型协作Spec.md` v2.4.1，已冻结，仅作留档
 
 ## 版本核心
+
+### 3.2.0 工作流面板：同页多任务 + 可输入模型选择 + 规则禁用
+
+一个工作区里可以同时推进多条任务，右侧栏一页全看：卡片显示状态、进度、当前在做谁、卡在哪和最近事件，增量 SSE 只推变化的板（`revision` 未变不跑 Python）。模型选择从下拉改为可直接打字的 combobox，并按规则把不可选的路由禁用且写明理由——例如评审节点不能选与产出方同族的模型（规则 19：`与产出方同族（deepseek）——评审必须来自不同家族`），`pin`/`assign` 在服务端同样拒绝（422 `rule_violation`）。
+
+- `GET /_multimodel/workflow/boards`：多任务索引（纯 JSON，按活跃度排序）。
+- `GET /_multimodel/workflow/events?tasks=all`：单连接增量帧 `{boards, tasks}`，1s tick + `revision` 闸门。
+- `GET /_multimodel/workflow/options?task=&node=`：逐条 `eligible/code/rule/reason`。
+- `scripts/families.py`：项目 `overrides.<model>.family` > 随包 `assets/families.json` > unknown（未知不算独立评审）。
+- `scripts/eligibility.py`：同族/同模型/家族未知/团队拒绝的判定，供面板与服务端共用。
 
 ### 3.1.0 协作工作流：可执行编排 + 实时可视化 + 节点模型切换
 
@@ -100,6 +110,8 @@ New-Item -ItemType Junction `
 - `scripts/build_envelope.py`
 - `scripts/iteration.py`
 - `scripts/orchestration.py`
+- `scripts/families.py`
+- `scripts/eligibility.py`
 - `scripts/selftest_models.py`
 
 完整说明见 `SKILL.md` 脚本表。
@@ -108,6 +120,7 @@ New-Item -ItemType Junction `
 
 | 版本 | 日期 | 变更 |
 |---|---|---|
+| 3.2.0 | 2026-11-17 | v3.2.0 工作流面板：`GET /workflow/boards` 多任务索引、`/workflow/events?tasks=all` 增量 SSE（revision 闸门，未变不跑 Python）、快照 `activity`（当前/阻塞/最近事件）、卡片网格同页并列；`/models` 增 `groups/favorites/recent`，面板改可输入 combobox；`scripts/families.py` + `scripts/eligibility.py` + `GET /workflow/options` 规则闸门（同族/同模型/家族未知禁用并写理由，`pin`/`assign` 422 `rule_violation`）；板根优先 workspaceRegistry；90 项 Node 测试 |
 | 3.1.0 | 2026-11-17 | v3.1.0 协作工作流：`scripts/orchestration.py`（T1–T11、I1–I8、手动模型优先、独立评审、返工、交付门禁、回执链）、`lib/workflow.js` 与 `/_multimodel/workflow*`（SSE、模型目录、`subagent` 派发校验）、右侧栏工作流视图与节点模型切换、`docs/workflow.md`；78 项 Node 测试、373 项离线自测 |
 | 3.0.5 | 2026-11-16 | Patch: the mandate no longer carries a wall-clock minute budget; only the call budget is enforced.；331 项离线自测 |
 | 3.0.4 | 2026-11-16 | v3.0.4：右侧栏滚动、验证并启用与进度反馈、扩展安装进度/结果、已启用扩展不可再选并可停用、诊断改为运行状态；47 项 Node 测试、331 项离线自测 |

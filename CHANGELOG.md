@@ -1,5 +1,24 @@
 # Changelog
 
+## 3.2.0 - 2026-11-17
+
+Workflow panel: every board at once, a typed model picker, and rule-disabled options.
+
+- **同页多任务**：新增 `GET /_multimodel/workflow/boards`（纯 JSON 索引，按活跃度排序）与
+  `GET /_multimodel/workflow/events?tasks=all`（单条 SSE 连接，增量帧 `{boards, tasks}`，
+  `revision` 未变不跑 Python）。面板改为卡片网格，多条任务同页并列、各自实时。
+- **可见性**：快照新增 `activity`（`current` / `blocked` / `last_event` / `stale_seconds`），
+  卡片显示“谁在做、卡在哪、多久没动”和最近事件时间线。
+- **模型选择**：`GET /_multimodel/models` 增加 `groups` / `favorites` / `recent`；面板改为可直接
+  打字的 combobox（模糊过滤、键盘、常用置顶），`pin` 成功写入 `recent`。
+- **规则闸门**：新增 `scripts/families.py`（项目 `overrides.<model>.family` > 随包
+  `assets/families.json` > unknown）与 `scripts/eligibility.py`；新增
+  `GET /_multimodel/workflow/options?task=&node=`，逐条返回 `eligible/code/rule/reason`。
+  违规项在 UI 中禁用并写明理由（如“与产出方同族（deepseek）——规则 19”），`pin`/`assign`
+  在 Node 侧同判并返回 **422 `rule_violation`**，不依赖 UI。
+- **项目根**：板根优先取宿主 `workspaceRegistry` 中的工作区，取不到退回进程 cwd（旧行为）。
+  `workflow`/`boards`/`tasks`/`options`/`events`/`models` 均接受 `?project=`。
+
 ## 3.1.0 - 2026-11-17
 
 Collaboration workflow: an executable board, a live graph, and per-node model switching.
