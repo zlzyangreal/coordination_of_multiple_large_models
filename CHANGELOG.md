@@ -37,7 +37,7 @@ Collaboration workflow: an executable board, a live graph, and per-node model sw
   back to a 5 s poll and a `轮询` pill after two stream errors.
 - `docs/workflow.md` documents the model, transitions, invariants, routes and the residual risk
   that a local administrator can rewrite the board and the receipts.
-- 78 Node tests (47 existing + 22 bridge + 9 client layout) and 369 Python cases pass; `verify.mjs`,
+- 78 Node tests (47 existing + 22 bridge + 9 client layout) and 373 Python cases pass; `verify.mjs`,
   `check_docs.py` and `check_rules.py` pass.
 
 ## 3.0.4 - 2026-11-16

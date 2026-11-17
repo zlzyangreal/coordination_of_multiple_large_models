@@ -123,51 +123,65 @@ class _BoardLock:
 
         deadline = time.monotonic() + self.timeout
         os.makedirs(os.path.dirname(self.path), exist_ok=True)
+        # An OS advisory lock on one byte is released when the owner process dies, so a
+        # crashed writer can never leave a stale lock behind and a live lock is never
+        # reclaimed by age.
+        handle = os.open(self.path, os.O_CREAT | os.O_RDWR)
         while True:
             try:
-                handle = os.open(self.path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
-            except FileExistsError:
-                # Reclaim a lock left behind by a writer that died without unlinking.
-                try:
-                    age = time.time() - os.path.getmtime(self.path)
-                except OSError:
-                    age = 0.0
-                if age > self.timeout:
+                self._lock(handle)
+            except OSError:
+                if time.monotonic() >= deadline:
                     try:
-                        os.unlink(self.path)
-                        continue
+                        os.close(handle)
                     except OSError:
                         pass
-                if time.monotonic() >= deadline:
                     raise BoardError(3, "board is locked by another writer") from None
                 time.sleep(self.poll)
                 continue
             try:
-                os.write(handle, str(os.getpid()).encode("ascii"))
+                os.lseek(handle, 0, os.SEEK_SET)
+                os.write(handle, str(os.getpid()).encode("ascii").ljust(16, b" "))
             except OSError:
-                try:
-                    os.close(handle)
-                except OSError:
-                    pass
-                try:
-                    os.unlink(self.path)
-                except OSError:
-                    pass
-                raise BoardError(1, "cannot acquire the board lock") from None
+                pass
             self.handle = handle
             return self
 
+    @staticmethod
+    def _lock(handle: int) -> None:
+        if os.name == "nt":
+            import msvcrt
+
+            os.lseek(handle, 0, os.SEEK_SET)
+            msvcrt.locking(handle, msvcrt.LK_NBLCK, 1)
+        else:
+            import fcntl
+
+            fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+
+    @staticmethod
+    def _unlock(handle: int) -> None:
+        if os.name == "nt":
+            import msvcrt
+
+            os.lseek(handle, 0, os.SEEK_SET)
+            msvcrt.locking(handle, msvcrt.LK_UNLCK, 1)
+        else:
+            import fcntl
+
+            fcntl.flock(handle, fcntl.LOCK_UN)
+
     def __exit__(self, exc_type: Any, exc: Any, traceback: Any) -> None:
         if self.handle is not None:
+            try:
+                self._unlock(self.handle)
+            except OSError:
+                pass
             try:
                 os.close(self.handle)
             except OSError:
                 pass
             self.handle = None
-        try:
-            os.unlink(self.path)
-        except OSError:
-            pass
         return None
 
 

@@ -3283,6 +3283,30 @@ def orchestration_cases(env, work):
     check("orchestration: two writers at the same revision get one winner and one exit 3",
           outcomes == [0, 3], outcomes)
 
+    # --- the lock is ownership-safe, not age-based -------------------------
+    import orchestration as board_module  # noqa: PLC0415
+
+    holder = board_module._BoardLock(project, "t-lock", timeout=2.0)
+    holder.__enter__()
+    try:
+        blocked = board_module._BoardLock(project, "t-lock", timeout=0.3)
+        second_entered = True
+        try:
+            blocked.__enter__()
+        except board_module.BoardError as exc:
+            second_entered = False
+            second_code = exc.code
+        finally:
+            blocked.__exit__(None, None, None)
+        check("orchestration: a live lock blocks a second writer instead of being reclaimed",
+              second_entered is False and second_code == 3, second_entered)
+    finally:
+        holder.__exit__(None, None, None)
+    again = board_module._BoardLock(project, "t-lock", timeout=0.5)
+    again.__enter__()
+    again.__exit__(None, None, None)
+    check("orchestration: the lock is reusable after the owner releases it", True)
+
 
 if __name__ == "__main__":
     sys.exit(main())

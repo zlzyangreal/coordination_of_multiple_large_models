@@ -4,7 +4,7 @@
 
 - 仓库：<https://github.com/zlzyangreal/coordination_of_multiple_large_models>
 - 版本：3.1.0（2026-11-17）
-- 当前离线自测：369 项（mock providers，不联网）；Node 测试 78 项
+- 当前离线自测：373 项（mock providers，不联网）；Node 测试 78 项
 - 上一代：`多模型协作Spec.md` v2.4.1，已冻结，仅作留档
 
 ## 版本核心
@@ -108,7 +108,7 @@ New-Item -ItemType Junction `
 
 | 版本 | 日期 | 变更 |
 |---|---|---|
-| 3.1.0 | 2026-11-17 | v3.1.0 协作工作流：`scripts/orchestration.py`（T1–T11、I1–I8、手动模型优先、独立评审、返工、交付门禁、回执链）、`lib/workflow.js` 与 `/_multimodel/workflow*`（SSE、模型目录、`subagent` 派发校验）、右侧栏工作流视图与节点模型切换、`docs/workflow.md`；78 项 Node 测试、369 项离线自测 |
+| 3.1.0 | 2026-11-17 | v3.1.0 协作工作流：`scripts/orchestration.py`（T1–T11、I1–I8、手动模型优先、独立评审、返工、交付门禁、回执链）、`lib/workflow.js` 与 `/_multimodel/workflow*`（SSE、模型目录、`subagent` 派发校验）、右侧栏工作流视图与节点模型切换、`docs/workflow.md`；78 项 Node 测试、373 项离线自测 |
 | 3.0.5 | 2026-11-16 | Patch: the mandate no longer carries a wall-clock minute budget; only the call budget is enforced.；331 项离线自测 |
 | 3.0.4 | 2026-11-16 | v3.0.4：右侧栏滚动、验证并启用与进度反馈、扩展安装进度/结果、已启用扩展不可再选并可停用、诊断改为运行状态；47 项 Node 测试、331 项离线自测 |
 | 3.0.3 | 2026-11-11 | v3.0.3：右侧栏 tab 定义补 guide 数组，开始页出现多模型协作卡片；45 项 Node 测试、331 项离线自测 |
