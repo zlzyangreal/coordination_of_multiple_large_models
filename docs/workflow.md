@@ -80,9 +80,11 @@ python scripts/orchestration.py deliver --task t1 --commit <sha> --project . --e
 python scripts/orchestration.py state   --task t1 --project . --receipts $r
 ```
 
-跑挂一个节点用 `fail --node <id> --reason "<文本>"`（T4，`running → failed`），之后可用 `start`
-从 `failed` 重试（T6）。每个命令输出一行 JSON：`{ok, code, message, task|error}`，退出码等于
-`code`。通过宿主插件使用时，`lib/workflow.js` 会替你拼这些参数并做子会话校验。
+跑挂一个节点用 `fail --node <id> --reason "<文本>"`（T4，`running → failed`，只接受 work/integrate
+节点），之后可用 `start` 从 `failed` 重试（T6）。每个命令输出一行 JSON：
+`{ok, code, message, task|error}`，退出码等于 `code`。通过宿主插件使用时，`lib/workflow.js` 会替你
+拼这些参数并做子会话校验（宿主工具暴露十个 op：state/init/plan/assign/pin/start/result/review/
+fail/deliver）。
 
 ## 回执链
 

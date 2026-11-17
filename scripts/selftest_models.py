@@ -3220,6 +3220,33 @@ def orchestration_cases(env, work):
     check("orchestration: T11 refuses to deliver a board that is still planning", code == 3,
           f"{code} {payload}")
 
+    # --- receipts are mandatory for every mutation --------------------------
+    call("init", "--task", "t-nr", "--title", "nr", "--expected-revision", "0")
+    call("plan", "--task", "t-nr", "--nodes-file", write_json("orch-nr.json", nodes()),
+         "--expected-revision", "1")
+    raw = subprocess.run(
+        [sys.executable, orch, "pin", "--task", "t-nr", "--project", project,
+         "--expected-revision", "2", "--node", "p1", "--lane", "dsh", "--provider", "d",
+         "--model", "x", "--by", "user", "--json"],
+        capture_output=True, text=True, env=env, encoding="utf-8", errors="replace")
+    check("orchestration: a mutation without --receipts is refused", raw.returncode in (2, 4),
+          raw.returncode)
+
+    # --- a review node cannot take T4 --------------------------------------
+    call("init", "--task", "t-revfail", "--title", "rf", "--expected-revision", "0")
+    call("plan", "--task", "t-revfail", "--nodes-file", write_json("orch-rf.json", nodes()),
+         "--expected-revision", "1")
+    call("start", "--task", "t-revfail", "--node", "p1",
+         "--expected-revision", str(revision("t-revfail")))
+    call("result", "--task", "t-revfail", "--node", "p1", "--summary", "x",
+         "--child-session", "c1", "--child-model", "model-a",
+         "--expected-revision", str(revision("t-revfail")))
+    call("start", "--task", "t-revfail", "--node", "r1",
+         "--expected-revision", str(revision("t-revfail")))
+    code, payload = call("fail", "--task", "t-revfail", "--node", "r1", "--reason", "nope",
+                         "--expected-revision", str(revision("t-revfail")))
+    check("orchestration: T4 is refused for a review node", code == 3, f"{code} {payload}")
+
     # --- per-task receipt streams stay independent --------------------------
     call("init", "--task", "t-two", "--title", "two", "--expected-revision", "0")
     call("plan", "--task", "t-two", "--nodes-file", write_json("orch-two.json", nodes()),

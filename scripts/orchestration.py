@@ -125,13 +125,37 @@ class _BoardLock:
         os.makedirs(os.path.dirname(self.path), exist_ok=True)
         while True:
             try:
-                self.handle = os.open(self.path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
-                os.write(self.handle, str(os.getpid()).encode("ascii"))
-                return self
+                handle = os.open(self.path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
             except FileExistsError:
+                # Reclaim a lock left behind by a writer that died without unlinking.
+                try:
+                    age = time.time() - os.path.getmtime(self.path)
+                except OSError:
+                    age = 0.0
+                if age > self.timeout:
+                    try:
+                        os.unlink(self.path)
+                        continue
+                    except OSError:
+                        pass
                 if time.monotonic() >= deadline:
                     raise BoardError(3, "board is locked by another writer") from None
                 time.sleep(self.poll)
+                continue
+            try:
+                os.write(handle, str(os.getpid()).encode("ascii"))
+            except OSError:
+                try:
+                    os.close(handle)
+                except OSError:
+                    pass
+                try:
+                    os.unlink(self.path)
+                except OSError:
+                    pass
+                raise BoardError(1, "cannot acquire the board lock") from None
+            self.handle = handle
+            return self
 
     def __exit__(self, exc_type: Any, exc: Any, traceback: Any) -> None:
         if self.handle is not None:
@@ -707,6 +731,8 @@ def _apply_op(
         raise BoardError(2, f"unknown mutating operation: {op}")
     if expected_revision is None or expected_revision < 0:
         raise BoardError(2, "--expected-revision must be a non-negative integer")
+    if not receipts:
+        raise BoardError(4, "every mutation requires --receipts", {"chain": "missing"})
     root = _project_root(project)
     board_path = _board_path(root, task)
     receipt_path = _receipt_path(root, receipts)
@@ -925,8 +951,8 @@ def _apply_op(
 
         elif op == "fail":
             node = _get_node(board, options.get("node", ""))
-            if node.get("status") != "running":
-                raise BoardError(3, "only a running node can fail")
+            if node.get("status") != "running" or node.get("kind") not in {"work", "integrate"}:
+                raise BoardError(3, "only a running work/integrate node can fail")
             reason = options.get("reason")
             if not isinstance(reason, str) or not reason.strip():
                 raise BoardError(2, "--reason must not be empty")
@@ -988,16 +1014,16 @@ def _parser() -> argparse.ArgumentParser:
     subparsers = parser.add_subparsers(dest="op", required=True, parser_class=JsonArgumentParser)
 
     init = subparsers.add_parser("init")
-    _add_common(init, mutating=True)
+    _add_common(init, mutating=True, receipts_required=True)
     init.add_argument("--title", required=True)
 
     plan = subparsers.add_parser("plan")
-    _add_common(plan, mutating=True)
+    _add_common(plan, mutating=True, receipts_required=True)
     plan.add_argument("--nodes-file", required=True)
 
     for name in ("assign", "pin"):
         command = subparsers.add_parser(name)
-        _add_common(command, mutating=True)
+        _add_common(command, mutating=True, receipts_required=True)
         command.add_argument("--node", required=True)
         command.add_argument("--lane", required=True, choices=sorted(LANES))
         command.add_argument("--provider", required=True)
@@ -1007,11 +1033,11 @@ def _parser() -> argparse.ArgumentParser:
             command.add_argument("--note")
 
     start = subparsers.add_parser("start")
-    _add_common(start, mutating=True)
+    _add_common(start, mutating=True, receipts_required=True)
     start.add_argument("--node", required=True)
 
     result = subparsers.add_parser("result")
-    _add_common(result, mutating=True)
+    _add_common(result, mutating=True, receipts_required=True)
     result.add_argument("--node", required=True)
     result.add_argument("--summary", required=True)
     result.add_argument("--artifact")
@@ -1021,14 +1047,14 @@ def _parser() -> argparse.ArgumentParser:
     result.add_argument("--no-subagent", action="store_true")
 
     review = subparsers.add_parser("review")
-    _add_common(review, mutating=True)
+    _add_common(review, mutating=True, receipts_required=True)
     review.add_argument("--node", required=True)
     review.add_argument("--verdict", required=True, choices=("pass", "fail"))
     review.add_argument("--findings-file")
     review.add_argument("--by")
 
     fail = subparsers.add_parser("fail")
-    _add_common(fail, mutating=True)
+    _add_common(fail, mutating=True, receipts_required=True)
     fail.add_argument("--node", required=True)
     fail.add_argument("--reason", required=True)
 
