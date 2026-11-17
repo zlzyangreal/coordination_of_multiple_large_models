@@ -1,20 +1,31 @@
-# Multi-model coordination — DSH plugin
+# Multi-model coordination — DSH plugin + Skill
 
-This repository is both the v3.0.0 Skill and an installable DeepSeek Harness bundle.
+Turn "how two or more models collaborate" into an executable, auditable process: who owns which
+node, which model a node may use, whether a review is truly independent, and when a new package
+version is allowed to take effect. The plugin lives in the DSH right sidebar, so the workflow, the
+model choice and the version review all happen in the UI.
 
 ## What it adds
 
-- One global switch, default **OFF**; OFF leaves DSH native, ON injects the 40-rule contract and
-  registers a single `coordination` tool. Until the session acknowledges the contract, every other
-  tool call is denied by a host-level guard.
-- Version lock: the running package version **and** digest must be verified by the user before the
-  switch can be enabled; a new version is staged in a separate verification profile and never
-  silently takes over.
-- A settings page listing declared optional extensions. Installation is user-confirmed and
-  disabled; activation requires a reported identity plus a declared probe. `dsh-our-free-model`
-  is optional and is not installed by default.
-- Local-only I0–I3 logs under `$DSH_HOME/coordination/`; no uploads, no automatic repair, no git
-  inclusion.
+- **Multi-task workflow board**: every board on one page (status, progress, current owner, blocked
+  reason, recent events); incremental SSE behind a revision gate, so an unchanged board never
+  spawns python.
+- **Model picker + rule gate**: a typable combobox grouped by provider; a review node disables
+  same-family / same-model / unknown-family routes inline with the rule number and a one-line
+  reason, and `pin`/`assign` are refused server-side with 422 `rule_violation`.
+- **Independent review and delivery**: a producer never reaches done on its own result; rework
+  attempts, verdicts and the receipt hash chain stay on the board, and delivery binds a resolvable
+  commit.
+- **40-rule contract gate**, default OFF: ON injects the contract and registers a single
+  `coordination` tool; until the session acknowledges it, every other tool call is denied by a
+  host-level guard.
+- **Version lock with one-click review**: the running version and digest must be user-verified; a
+  staged version offers "pass and enable" or "reject", and a rejection records the reason, writes
+  an I1 log and keeps the package unverified.
+- **Governance and self-bootstrap**: mandate, L1/L2/L3 decisions, review budget, plan gate,
+  baseline comparison, candidate promotion and rollback.
+- **Declared optional extensions** (installed disabled, activated separately) and local-only
+  I0–I3 logs.
 
 ## Install
 
