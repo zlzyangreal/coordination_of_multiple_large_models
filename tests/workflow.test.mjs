@@ -230,6 +230,61 @@ test('workflow: close ends subscribers and is idempotent', async () => {
   await rm(root, { recursive: true, force: true })
 })
 
+test('workflow: verifyChild reports an unavailable service as unverified', async () => {
+  const root = await workspace()
+  const bridge = new WorkflowBridge({ ctx: { get: () => undefined }, engine: engineReturning({ ok: true }), projectRoot: root, homeRoot: root, root })
+  const value = await bridge.verifyChild('s1', 'c1', 'm1')
+  assert.equal(value.ok, false)
+  assert.equal(value.verified, false)
+  assert.match(value.reason, /unavailable/)
+  await bridge.close()
+  await rm(root, { recursive: true, force: true })
+})
+
+test('workflow: verifyChild refuses a child outside the session catalog', async () => {
+  const root = await workspace()
+  const subagent = { listChildren: async () => [{ childId: 'other', model: 'm1' }] }
+  const bridge = new WorkflowBridge({
+    ctx: { get: (name) => (name === 'subagent' ? subagent : undefined) },
+    engine: engineReturning({ ok: true }), projectRoot: root, homeRoot: root, root,
+  })
+  const value = await bridge.verifyChild('s1', 'c1', 'm1')
+  assert.equal(value.ok, false)
+  assert.equal(value.verified, true)
+  assert.match(value.reason, /not in this session/)
+  await bridge.close()
+  await rm(root, { recursive: true, force: true })
+})
+
+test('workflow: verifyChild refuses a child that ran a different model', async () => {
+  const root = await workspace()
+  const subagent = { listChildren: async () => [{ childId: 'c1', model: 'other-model' }] }
+  const bridge = new WorkflowBridge({
+    ctx: { get: (name) => (name === 'subagent' ? subagent : undefined) },
+    engine: engineReturning({ ok: true }), projectRoot: root, homeRoot: root, root,
+  })
+  const value = await bridge.verifyChild('s1', 'c1', 'm1')
+  assert.equal(value.ok, false)
+  assert.equal(value.verified, true)
+  assert.match(value.reason, /other-model/)
+  await bridge.close()
+  await rm(root, { recursive: true, force: true })
+})
+
+test('workflow: verifyChild accepts the assigned model', async () => {
+  const root = await workspace()
+  const subagent = { listChildren: async () => [{ childId: 'c1', model: 'm1' }] }
+  const bridge = new WorkflowBridge({
+    ctx: { get: (name) => (name === 'subagent' ? subagent : undefined) },
+    engine: engineReturning({ ok: true }), projectRoot: root, homeRoot: root, root,
+  })
+  const value = await bridge.verifyChild('s1', 'c1', 'm1')
+  assert.equal(value.ok, true)
+  assert.equal(value.verified, true)
+  await bridge.close()
+  await rm(root, { recursive: true, force: true })
+})
+
 test('workflow: an unwatchable board directory never throws into the host', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'mmc-workflow-bad-'))
   const bridge = new WorkflowBridge({

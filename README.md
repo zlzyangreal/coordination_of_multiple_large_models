@@ -3,11 +3,20 @@
 用于 **2 个及以上大模型协作** 的调度与对接：谁负责、怎么交接、评审结论怎么判断可信、出错怎么退。只管协作机制——代码、文档、数据、方案都适用；代码风格、写作、排版属于项目自己的事实包与 DoD，不写进这里。
 
 - 仓库：<https://github.com/zlzyangreal/coordination_of_multiple_large_models>
-- 版本：3.0.5（2026-11-16）
-- 当前离线自测：331 项（mock providers，不联网）
+- 版本：3.1.0（2026-11-17）
+- 当前离线自测：364 项（mock providers，不联网）；Node 测试 73 项
 - 上一代：`多模型协作Spec.md` v2.4.1，已冻结，仅作留档
 
 ## 版本核心
+
+### 3.1.0 协作工作流：可执行编排 + 实时可视化 + 节点模型切换
+
+把「多模型协作」从流程约定变成可执行的看板：lead 拆分出的每个节点都有 owner（哪个模型）、状态、评审结论与返工次数；没有**独立评审**的产出不能算完成，手动指定的模型不会被自动分配覆盖，交付前必须通过回执哈希链。右侧栏新增「工作流」视图，用 DAG 实时显示分工、依赖、评审与返工，并可在节点详情里直接换模型。
+
+- `scripts/orchestration.py`：T1–T11 转移、I1–I8 不变量、CAS 修订号、回执链、`--json` 状态。
+- `lib/workflow.js` + `/_multimodel/workflow*`：固定 argv 调 Python、SSE 推送（1s tick 兜底）、`ctx.llm` 实时模型目录、`subagent.listChildren` 校验派发。
+- `lib/client.js`：工作流/控制台分段视图、SVG DAG、状态色、节点详情、模型下拉、交付按钮。
+- 复用 DSH 原生能力（`llm`、`webServer` SSE、client slot、`subagent`），不内嵌 Flowise/LangGraph/AutoGen/MAF；细节见 `docs/workflow.md`。
 
 ### 3.0.0 DSH 原生多模型协作插件
 
@@ -99,6 +108,7 @@ New-Item -ItemType Junction `
 
 | 版本 | 日期 | 变更 |
 |---|---|---|
+| 3.1.0 | 2026-11-17 | v3.1.0 协作工作流：`scripts/orchestration.py`（T1–T11、I1–I8、手动模型优先、独立评审、返工、交付门禁、回执链）、`lib/workflow.js` 与 `/_multimodel/workflow*`（SSE、模型目录、`subagent` 派发校验）、右侧栏工作流视图与节点模型切换、`docs/workflow.md`；73 项 Node 测试、364 项离线自测 |
 | 3.0.5 | 2026-11-16 | Patch: the mandate no longer carries a wall-clock minute budget; only the call budget is enforced.；331 项离线自测 |
 | 3.0.4 | 2026-11-16 | v3.0.4：右侧栏滚动、验证并启用与进度反馈、扩展安装进度/结果、已启用扩展不可再选并可停用、诊断改为运行状态；47 项 Node 测试、331 项离线自测 |
 | 3.0.3 | 2026-11-11 | v3.0.3：右侧栏 tab 定义补 guide 数组，开始页出现多模型协作卡片；45 项 Node 测试、331 项离线自测 |
