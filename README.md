@@ -90,6 +90,7 @@ New-Item -ItemType Junction `
 - `scripts/reap_turns.py`
 - `scripts/build_envelope.py`
 - `scripts/iteration.py`
+- `scripts/orchestration.py`
 - `scripts/selftest_models.py`
 
 完整说明见 `SKILL.md` 脚本表。

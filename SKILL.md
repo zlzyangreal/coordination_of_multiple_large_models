@@ -137,6 +137,7 @@ paths only (rule 38).
 | `python scripts/models.py <init\|providers\|add\|key\|account\|team\|list\|discover\|test\|use\|route\|chains\|call\|plan\|health\|budget\|doctor>` | Per-project model access; `call` infers `produce` when role is omitted |
 | `python scripts/quota.py [--source {auto,live,log}] [--json] [--remaining 62 --minutes 210]` | 5 h / weekly remaining, tier S/A/B/C/R/U, who produces, call shape |
 | `python scripts/validate_result.py --result <json> [--envelope <yaml>]` | Schema + echo + unit coverage + facts/test_refs validation; exit 1 blocks adoption |
+| `python scripts/orchestration.py <init\|plan\|assign\|pin\|start\|result\|review\|deliver\|state> --project .` | Deterministic collaboration board: T1–T11 transitions, manual model pins, independent review, rework attempts, delivery gate, receipt chain, JSON state for the side panel |
 | `python scripts/schema_for_codex.py --schema <json> --out <f>` | Derive the strict schema codex requires (run_gpt does it automatically) |
 | `python scripts/build_envelope.py --artifact <path> --out <yaml> --ledger <ledger> --unit "id::locator::expected"` | Envelope with facts, zero-write capture, units, schema path, prior findings, optional `--test-evidence` |
 | `python scripts/reap_turns.py [--older-than 30] [--apply]` | Close turns stuck in `inProgress`; backup first |

@@ -240,6 +240,7 @@ def main():
         plan_cases(env, work, port_a, port_b)
         gate_cases(env, work, port_a, port_b)
         iteration_cases(env, work)
+        orchestration_cases(env, work)
         governance_cases(env, work)
     finally:
         for server in (server_a, server_b, server_c):
@@ -2889,6 +2890,299 @@ def governance_cases(env, work):
             sys.modules.pop("authority", None)
     check("governance: a missing authority module fails closed when governance is enabled",
           isinstance(problem, str) and problem.startswith("authority (3)"), str(problem))
+
+
+def orchestration_cases(env, work):
+    """v3.1.0 orchestration board: T1-T11, invariants I1-I8, receipts, delivery gate."""
+    orch = os.path.join(HERE, "orchestration.py")
+    project = os.path.join(work, "orch-project")
+    os.makedirs(project, exist_ok=True)
+    receipts = os.path.join(work, "orch-receipts.jsonl")
+
+    def call(*args, receipts_path=True):
+        argv = [sys.executable, orch, args[0], "--project", project] + list(args[1:])
+        if receipts_path:
+            argv += ["--receipts", receipts if receipts_path is True else receipts_path]
+        argv.append("--json")
+        done = subprocess.run(argv, capture_output=True, text=True, env=env,
+                              encoding="utf-8", errors="replace", timeout=120)
+        payload = {}
+        for line in (done.stdout or "").splitlines():
+            if line.strip().startswith("{"):
+                try:
+                    payload = json.loads(line.strip())
+                except ValueError:
+                    payload = {}
+        return done.returncode, payload
+
+    def task(task_id, receipts_path=True):
+        _code, payload = call("state", "--task", task_id, receipts_path=receipts_path)
+        return payload.get("task") or {}
+
+    def revision(task_id):
+        return task(task_id).get("revision")
+
+    def node(task_id, node_id):
+        for item in task(task_id).get("nodes") or []:
+            if item.get("id") == node_id:
+                return item
+        return {}
+
+    fixtures = os.path.join(project, "_work", "orch-fixtures")
+    os.makedirs(fixtures, exist_ok=True)
+
+    def write_json(name, value):
+        path = os.path.join(fixtures, name)
+        with open(path, "w", encoding="utf-8") as fh:
+            json.dump(value, fh)
+        return path
+
+    def nodes(review_lane="codex"):
+        return [
+            {"id": "p1", "title": "produce A", "kind": "work", "depends_on": [],
+             "assignee": {"lane": "dsh", "provider": "deepseek", "model": "model-a"}},
+            {"id": "r1", "title": "review A", "kind": "review", "reviews": "p1",
+             "depends_on": ["p1"],
+             "assignee": {"lane": review_lane, "provider": "openai", "model": "model-b"}},
+        ]
+
+    # --- init / state -------------------------------------------------------
+    code, payload = call("init", "--task", "t-main", "--title", "main",
+                         "--expected-revision", "0")
+    check("orchestration: init creates revision 1",
+          code == 0 and payload.get("task", {}).get("revision") == 1, f"{code} {payload}")
+    check("orchestration: a fresh board is planning with no nodes",
+          task("t-main").get("status") == "planning" and not task("t-main").get("nodes"))
+
+    # --- plan + invariants --------------------------------------------------
+    plan_file = write_json("orch-main.json", nodes())
+    code, _payload = call("plan", "--task", "t-main", "--nodes-file", plan_file,
+                          "--expected-revision", str(revision("t-main")))
+    check("orchestration: a two-node plan is accepted", code == 0, code)
+
+    cyclic = [
+        {"id": "a", "title": "a", "kind": "work", "depends_on": ["b"],
+         "assignee": {"lane": "dsh", "provider": "d", "model": "m"}},
+        {"id": "b", "title": "b", "kind": "work", "depends_on": ["a"],
+         "assignee": {"lane": "dsh", "provider": "d", "model": "m"}},
+    ]
+    call("init", "--task", "t-cycle", "--title", "c", "--expected-revision", "0")
+    code, payload = call("plan", "--task", "t-cycle",
+                         "--nodes-file", write_json("orch-cycle.json", cyclic),
+                         "--expected-revision", "1")
+    check("orchestration: I1 rejects a dependency cycle", code == 4, f"{code} {payload}")
+
+    call("init", "--task", "t-family", "--title", "f", "--expected-revision", "0")
+    code, payload = call("plan", "--task", "t-family",
+                         "--nodes-file", write_json("orch-family.json", nodes(review_lane="dsh")),
+                         "--expected-revision", "1")
+    check("orchestration: I3 refuses a reviewer in the producer's family", code == 4,
+          f"{code} {payload}")
+
+    no_dep = nodes()
+    no_dep[1]["depends_on"] = []
+    call("init", "--task", "t-nodep", "--title", "n", "--expected-revision", "0")
+    code, payload = call("plan", "--task", "t-nodep",
+                         "--nodes-file", write_json("orch-nodep.json", no_dep),
+                         "--expected-revision", "1")
+    check("orchestration: I2 refuses a review that does not depend on its producer", code == 4,
+          f"{code} {payload}")
+
+    # --- assignment and pins ------------------------------------------------
+    code, _payload = call("pin", "--task", "t-main", "--node", "p1", "--lane", "dsh",
+                          "--provider", "deepseek", "--model", "pinned-model",
+                          "--by", "user", "--expected-revision", str(revision("t-main")))
+    check("orchestration: pin applies a manual model",
+          code == 0 and node("t-main", "p1").get("assignee", {}).get("source") == "manual",
+          f"{code} {node('t-main', 'p1')}")
+    code, payload = call("assign", "--task", "t-main", "--node", "p1", "--lane", "dsh",
+                         "--provider", "deepseek", "--model", "auto-model",
+                         "--expected-revision", str(revision("t-main")))
+    check("orchestration: I4 refuses to overwrite a manual pin with an auto assign", code == 4,
+          f"{code} {payload}")
+    check("orchestration: the manual model survives the refused assign",
+          node("t-main", "p1").get("assignee", {}).get("model") == "pinned-model")
+
+    # --- I5 stale revision --------------------------------------------------
+    board_file = os.path.join(project, "_work", "orchestration", "t-main.json")
+    with open(board_file, "rb") as fh:
+        before = fh.read()
+    code, payload = call("start", "--task", "t-main", "--node", "p1",
+                         "--expected-revision", "999")
+    with open(board_file, "rb") as fh:
+        after = fh.read()
+    check("orchestration: I5 refuses a stale expected-revision with exit 3", code == 3,
+          f"{code} {payload}")
+    check("orchestration: I5 writes nothing on a stale revision", before == after)
+
+    # --- T2/T3/I8 -----------------------------------------------------------
+    code, _payload = call("start", "--task", "t-main", "--node", "p1",
+                          "--expected-revision", str(revision("t-main")))
+    check("orchestration: T2 starts a ready node",
+          code == 0 and node("t-main", "p1").get("status") == "running", code)
+    code, payload = call("result", "--task", "t-main", "--node", "p1", "--summary", "done a",
+                         "--child-session", "child-1", "--child-model", "other-model",
+                         "--expected-revision", str(revision("t-main")))
+    check("orchestration: I8 refuses a result whose child ran a different model", code == 4,
+          f"{code} {payload}")
+    code, _payload = call("result", "--task", "t-main", "--node", "p1", "--summary", "done a",
+                          "--child-session", "child-1", "--child-model", "pinned-model",
+                          "--expected-revision", str(revision("t-main")))
+    check("orchestration: T3 moves a producer with a verified child into review",
+          code == 0 and node("t-main", "p1").get("status") == "review", code)
+    check("orchestration: I6 keeps the producer out of done before the verdict",
+          node("t-main", "p1").get("status") != "done")
+
+    # --- T7/T8 review start -------------------------------------------------
+    check("orchestration: T7 marks the review ready while the producer is in review",
+          node("t-main", "r1").get("ready") is True)
+    code, _payload = call("start", "--task", "t-main", "--node", "r1",
+                          "--expected-revision", str(revision("t-main")))
+    check("orchestration: T8 records the reviewed attempt",
+          code == 0 and (node("t-main", "r1").get("review") or {}).get("attempt") == 1,
+          node("t-main", "r1"))
+
+    # --- T10 rework loop ----------------------------------------------------
+    findings = write_json("orch-findings.json", [
+        {"id": "F-1", "severity": "medium", "where": "p1:1", "status": "open"}])
+    code, _payload = call("review", "--task", "t-main", "--node", "r1", "--verdict", "fail",
+                          "--findings-file", findings, "--by", "gpt",
+                          "--expected-revision", str(revision("t-main")))
+    check("orchestration: T10 sends a failed producer back to rework",
+          code == 0 and node("t-main", "p1").get("status") == "rework", node("t-main", "p1"))
+    check("orchestration: T10 resets the review node to pending",
+          node("t-main", "r1").get("status") == "pending")
+    code, _payload = call("start", "--task", "t-main", "--node", "p1",
+                          "--expected-revision", str(revision("t-main")))
+    check("orchestration: T5 restarts a rework node at attempt 2",
+          code == 0 and node("t-main", "p1").get("attempt") == 2,
+          f"{code} {node('t-main', 'p1')}")
+    code, _payload = call("result", "--task", "t-main", "--node", "p1", "--summary", "done a v2",
+                          "--child-session", "child-2", "--child-model", "pinned-model",
+                          "--expected-revision", str(revision("t-main")))
+    check("orchestration: the second attempt returns to review",
+          code == 0 and node("t-main", "p1").get("status") == "review", code)
+    code, _payload = call("start", "--task", "t-main", "--node", "r1",
+                          "--expected-revision", str(revision("t-main")))
+    check("orchestration: the re-review binds the new attempt",
+          code == 0 and (node("t-main", "r1").get("review") or {}).get("attempt") == 2,
+          node("t-main", "r1"))
+    code, _payload = call("review", "--task", "t-main", "--node", "r1", "--verdict", "pass",
+                          "--by", "gpt", "--expected-revision", str(revision("t-main")))
+    check("orchestration: T9 completes both the review and the producer",
+          code == 0 and node("t-main", "r1").get("status") == "done"
+          and node("t-main", "p1").get("status") == "done",
+          f"{node('t-main', 'r1')} {node('t-main', 'p1')}")
+
+    # --- T11 delivery + receipts -------------------------------------------
+    state = task("t-main")
+    check("orchestration: delivery is allowed once every node is done",
+          state.get("can_deliver") is True, state.get("can_deliver"))
+
+    # A copy of a complete board, tampered out of band, must break its chain.
+    with open(board_file, "r", encoding="utf-8") as fh:
+        copied = json.load(fh)
+    copied["task_id"] = "t-tamper"
+    tamper_board = os.path.join(project, "_work", "orchestration", "t-tamper.json")
+    with open(tamper_board, "w", encoding="utf-8") as fh:
+        json.dump(copied, fh)
+    tampered = os.path.join(work, "orch-tamper.jsonl")
+    shutil.copyfile(receipts, tampered)
+    with open(tamper_board, "a", encoding="utf-8") as fh:
+        fh.write("\n")
+    code, payload = call("deliver", "--task", "t-tamper", "--commit", "abc1234",
+                         "--expected-revision", str(revision("t-tamper")),
+                         receipts_path=tampered)
+    check("orchestration: an out-of-band board edit breaks the receipt chain", code == 4,
+          f"{code} {payload}")
+    code, _payload = call("deliver", "--task", "t-main", "--commit", "abc1234",
+                          "--expected-revision", str(revision("t-main")))
+    check("orchestration: T11 delivers with a verified chain",
+          code == 0 and task("t-main").get("status") == "delivered", code)
+
+    # --- delivery gates -----------------------------------------------------
+    call("init", "--task", "t-gate", "--title", "gate", "--expected-revision", "0")
+    call("plan", "--task", "t-gate", "--nodes-file", write_json("orch-gate.json", nodes()),
+         "--expected-revision", "1")
+    code, payload = call("deliver", "--task", "t-gate", "--commit", "abc1234",
+                         "--expected-revision", str(revision("t-gate")))
+    check("orchestration: I7 blocks delivery while a node is still pending", code == 4,
+          f"{code} {payload}")
+
+    zero_review = [{"id": "solo", "title": "solo", "kind": "work", "depends_on": [],
+                    "assignee": {"lane": "dsh", "provider": "d", "model": "m"}}]
+    call("init", "--task", "t-zero", "--title", "zero", "--expected-revision", "0")
+    code, payload = call("plan", "--task", "t-zero",
+                         "--nodes-file", write_json("orch-zero.json", zero_review),
+                         "--expected-revision", "1")
+    check("orchestration: I6/I7 refuse a plan without an independent review node", code == 4,
+          f"{code} {payload}")
+    check("orchestration: the refused plan leaves the board empty",
+          not task("t-zero").get("nodes"))
+
+    call("init", "--task", "t-block", "--title", "block", "--expected-revision", "0")
+    call("plan", "--task", "t-block", "--nodes-file", write_json("orch-block.json", nodes()),
+         "--expected-revision", "1")
+    call("start", "--task", "t-block", "--node", "p1",
+         "--expected-revision", str(revision("t-block")))
+    call("result", "--task", "t-block", "--node", "p1", "--summary", "x",
+         "--child-session", "c9", "--child-model", "model-a",
+         "--expected-revision", str(revision("t-block")))
+    call("start", "--task", "t-block", "--node", "r1",
+         "--expected-revision", str(revision("t-block")))
+    code, _payload = call("review", "--task", "t-block", "--node", "r1", "--verdict", "fail",
+                          "--findings-file", write_json("orch-block-find.json", [
+                              {"id": "F-9", "severity": "low", "where": "p1:1", "status": "open"}]),
+                          "--expected-revision", str(revision("t-block")))
+    code, payload = call("deliver", "--task", "t-block", "--commit", "abc1234",
+                         "--expected-revision", str(revision("t-block")))
+    check("orchestration: I7 blocks delivery while a node is in rework", code == 4,
+          f"{code} {payload}")
+
+    call("init", "--task", "t-find", "--title", "find", "--expected-revision", "0")
+    call("plan", "--task", "t-find", "--nodes-file", write_json("orch-find.json", nodes()),
+         "--expected-revision", "1")
+    call("start", "--task", "t-find", "--node", "p1",
+         "--expected-revision", str(revision("t-find")))
+    call("result", "--task", "t-find", "--node", "p1", "--summary", "x",
+         "--child-session", "c10", "--child-model", "model-a",
+         "--expected-revision", str(revision("t-find")))
+    call("start", "--task", "t-find", "--node", "r1",
+         "--expected-revision", str(revision("t-find")))
+    code, _payload = call("review", "--task", "t-find", "--node", "r1", "--verdict", "pass",
+                          "--findings-file", write_json("orch-open-medium.json", [
+                              {"id": "F-10", "severity": "medium", "where": "p1:2", "status": "open"}]),
+                          "--expected-revision", str(revision("t-find")))
+    code, payload = call("deliver", "--task", "t-find", "--commit", "abc1234",
+                         "--expected-revision", str(revision("t-find")))
+    check("orchestration: I7 blocks delivery while a medium finding is open", code == 4,
+          f"{code} {payload}")
+
+    # --- I8 artifact path ---------------------------------------------------
+    artifact_nodes = [
+        {"id": "a1", "title": "artifact", "kind": "work", "depends_on": [],
+         "assignee": {"lane": "dsh", "provider": "d", "model": "m"}},
+        {"id": "a2", "title": "review artifact", "kind": "review", "reviews": "a1",
+         "depends_on": ["a1"],
+         "assignee": {"lane": "codex", "provider": "o", "model": "g"}},
+    ]
+    call("init", "--task", "t-art", "--title", "art", "--expected-revision", "0")
+    call("plan", "--task", "t-art", "--nodes-file", write_json("orch-art.json", artifact_nodes),
+         "--expected-revision", "1")
+    call("start", "--task", "t-art", "--node", "a1",
+         "--expected-revision", str(revision("t-art")))
+    code, payload = call("result", "--task", "t-art", "--node", "a1", "--summary", "by hand",
+                         "--artifact", "docs/x.md", "--commit", "abc1234", "--no-subagent",
+                         "--expected-revision", str(revision("t-art")))
+    check("orchestration: I8 accepts an artifact result only with --no-subagent",
+          code == 0 and (node("t-art", "a1").get("result") or {}).get("verified") == "artifact",
+          f"{code} {payload}")
+
+    # --- read-only state ----------------------------------------------------
+    code, payload = call("state", "--task", "t-art")
+    check("orchestration: state reports progress and a chain verdict",
+          code == 0 and "progress" in payload.get("task", {})
+          and payload["task"].get("chain") == "ok", payload.get("task", {}).get("chain"))
 
 
 if __name__ == "__main__":
