@@ -13,7 +13,8 @@
 | `lib/extensions.js` | 声明目录、状态映射、批量安装（禁用）、身份+探测门槛的启用 |
 | `lib/engine.js` | Python 核心适配：固定 argv、`ctx.subprocess`/execFile、超时、退出码映射、I0 降级 |
 | `lib/http.js` | 人类专用 `/_multimodel/*` 路由：同源 + CSRF + 显式 confirm |
-| `lib/client.js` | 设置页：开关、验证、契约、扩展、日志、诊断 |
+| `lib/workflow.js` | 工作流桥：固定 argv 调 `scripts/orchestration.py`、回执链、SSE、模型目录、失败降级 |
+| `lib/client.js` | 右侧栏：控制台（开关、验证、契约、扩展、日志）+ 工作流图 |
 
 ## 启动顺序
 
