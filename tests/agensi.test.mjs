@@ -159,3 +159,30 @@ test('sync --yes refuses to publish when the session pin is stale', { skip }, as
     await rm(root, { recursive: true, force: true })
   }
 })
+
+test('sync --yes refuses a version the pin does not name', { skip }, async () => {
+  const root = await fixture({ version: '9.0.0', published: '3.3.0' })
+  try {
+    await mkdir(path.join(root, 'scripts'), { recursive: true })
+    await writeFile(path.join(root, 'scripts', 'session.py'), 'import sys\nsys.exit(0)\n')
+    await mkdir(path.join(root, '_work'), { recursive: true })
+    await writeFile(path.join(root, '_work', 'skill_pin.json'), JSON.stringify({ version: '3.3.0' }))
+    const result = run(root, ['sync', '--yes'])
+    assert.equal(result.code, 4)
+    assert.match(result.stderr, /pin names 3\.3\.0/)
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test('a non-object publish state is reported, not a traceback', { skip }, async () => {
+  const root = await fixture({ version: '3.3.0', published: '3.3.0' })
+  try {
+    await writeFile(path.join(root, 'agensi', 'publish-state.json'), '[]')
+    const result = run(root, ['check'])
+    assert.equal(result.code, 2)
+    assert.match(result.stderr, /must contain a JSON object/)
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})

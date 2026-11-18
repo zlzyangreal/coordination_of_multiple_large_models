@@ -336,7 +336,10 @@ def main():
     producer = args.producer or producer_default()
     workspace = common.workspace_identity(project)
     iteration = common.iteration_summary(project) or {}
-    target = iteration.get("target") or {}
+    # A promoted/closed iteration is history: the reviewed commit is the workspace HEAD, not the
+    # candidate of an iteration that already shipped. Emitting a stale target_commit made every
+    # later review fail the evidence binding (57dc3dd != fcc4a35) for no real reason.
+    target = iteration.get("target") or {} if iteration.get("stage") == "development" else {}
 
     governance = None
     try:

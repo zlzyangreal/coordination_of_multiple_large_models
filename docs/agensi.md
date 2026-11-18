@@ -42,11 +42,17 @@ python scripts/agensi_publish.py check --json     # 给 CI / release.py 用
 python scripts/agensi_publish.py package          # 生成手工上传用 zip，打印 sha256
 python scripts/agensi_publish.py status           # creator_status + my_skills
 python scripts/agensi_publish.py sync             # 只打印计划（不发送）
-python scripts/agensi_publish.py sync --yes       # 真正提交 / 更新
-python scripts/agensi_publish.py sync --preview   # 首次提交只出草稿预览，不确认
+python scripts/agensi_publish.py sync --yes       # 真正提交 / 更新（先过发布门）
+python scripts/agensi_publish.py sync --yes --preview   # 首次提交只出草稿预览，不确认
 ```
 
-退出码：`0` 正常/跳过/预览，`2` 包或状态错误，`3` 需要登录，`4` 平台错误，`5` 版本策略拒绝。
+- `--preview` 只在**首次提交**上有意义，而且必须同时带 `--yes`（否则命令在联网前就返回了计划）；
+  对 `update` 使用 `--preview` 会直接报错，因为平台没有非写入的更新预览。
+- 发布过程中会写 `_work/agensi/pending-<version>.json` 并持有 `_work/agensi/.sync.lock`；
+  如果上一次发布在服务端成功但本地没收到结果，下一次会拒绝并要求先 `status` 核对，
+  核对后再加 `--resolve-pending` 重跑。并发运行会被锁直接拒绝（远端没有幂等键）。
+
+退出码：`0` 正常/跳过/预览，`2` 包或状态错误，`3` 需要登录，`4` 发布门或平台错误，`5` 版本策略拒绝。
 
 ## 版本策略
 
@@ -86,7 +92,15 @@ python scripts/agensi_publish.py sync --preview   # 首次提交只出草稿预�
    "未认证的用户凭据"（命令行会打印 NOTICE），有 secret 时必须带 `--approval-token`。
 
 **每一次版本更新都需要新的批准**（`--subject` 换成新版本）。这是有意的：发布是 L1 操作，
-流程的意义就在于每个外发动作都有人签字。预览（`sync --preview`）同样受门约束。
+流程的意义就在于每个外发动作都有人签字。预览（`sync --yes --preview`）同样受门约束。
+
+门的判定是 fail-closed 的，三个细节容易踩：
+
+- **治理必须已初始化**。仓库里没有 `_work/governance/` 时，`guard` 会返回
+  `governance disabled` 并标 `allowed`，脚本不把它当作许可：没有决策记录就不发。
+- **pin 的版本必须等于发布版本**。`session.py` 只比对仓库 `SKILL.md`，所以脚本自己读
+  `_work/skill_pin.json` 再比一次；`sync --version 9.0.0` 在 3.3.0 的 pin 下会被拒。
+- **包内符号链接直接拒绝**，避免把包外内容以包内路径上传；token 以 0600 原子写入。
 
 `check` 不联网、不过门，可以随时跑；`sync` 不带 `--yes` 只打印计划。
 
@@ -95,7 +109,7 @@ python scripts/agensi_publish.py sync --preview   # 首次提交只出草稿预�
 1. 账号：用 Google 账号登录 <https://www.agensi.io>，在 Creator Studio 打开 **Creator Mode**。
    免费 skill 不需要绑定收款；付费/订阅才需要 Stripe 或 USDC。
 2. 授权：`python scripts/agensi_publish.py login`。
-3. 预览：`python scripts/agensi_publish.py sync --preview`，检查草稿（文件、名称、摘要、价格）。
+3. 预览：`python scripts/agensi_publish.py sync --yes --preview`，检查草稿（文件、名称、摘要、价格）。
 4. 提交：`python scripts/agensi_publish.py sync --yes`（会带上 `draft_id` 确认上架）。
 5. 审核：8 项自动安全检查 + AI 审阅 + 人工，通常 24–48 小时；通过后 `status` 里能看到 `live`。
 6. 失败：`status` 会给出 rejected 原因与未通过的安全检查项；修完重新 `sync --yes`。

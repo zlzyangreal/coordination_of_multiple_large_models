@@ -19,6 +19,14 @@ Agensi listing: a portable protocol layer, synced on minor and major versions on
 - **publish 进入 L1**：`authority.py` 新增 `publish` 受控操作；`agensi_publish.py` 在 `--yes` 前先跑
   `session.py check --strict`（pin 必须等于当前版本）再跑 `authority.guard("publish")`，任一不过即退出 4，
   联网前停止。3.3.0 那次"pin 停在 3.0.5 却已发布"的路径由此关闭。
+- **独立评审后的加固**（codex/gpt-5.6-sol 对 3.3.0 diff 的评审）：门改为彻底 fail-closed——
+  `governance disabled` 不再视为许可，要求 `level=L1` 且带 `decision_id`；pin 的版本必须等于本次发布版本
+  （堵掉 `--version` 绕过）；`publish` 加入 `WRITABLE_OPS`，pause/HALT 时同样拒发；包内符号链接直接拒绝；
+  发布加 `.sync.lock` 与 `pending-<version>.json` 标记，避免并发或"服务端已成功、本地丢结果"后重复提交；
+  token 以 0600 原子写入；`publish-state.json` 非对象时报错而不是抛栈；401 只在初始化阶段刷新重试一次，
+  更新调用绝不自动重试；`--preview` 必须带 `--yes`，且只对首次提交有效。
+- **信封绑定修正**：已晋升的迭代不再把旧 candidate commit 当作 `target_commit`，否则每次评审都会在
+  "证据 commit 与信封 target 不一致"上被判无效（57dc3dd vs fcc4a35）。
 
 ## 3.2.0 - 2026-11-17
 
