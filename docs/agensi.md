@@ -65,6 +65,31 @@ python scripts/agensi_publish.py sync --preview   # 首次提交只出草稿预�
   避免源文件版本漂移。
 - 更新时 changelog 取 `CHANGELOG.md` 中 `## <version>` 段落（最多 2000 字符）。
 
+## 发布门（2026-11-18 加严）
+
+`sync --yes` 在联网之前先过两道门，任何一道不过都直接退出（退出码 4），不会发出任何写请求：
+
+1. **pin 一致**：`session.py check --strict` 必须返回 0。版本一变就要先
+   `python scripts/session.py pin --force`，否则发布被拒。这一条正是 3.3.0 那次漏掉的：
+   仓库已经是 3.3.0，pin 还停在 3.0.5。
+2. **L1 决策**：`authority.guard(root, "publish", subject=<version>)` 必须允许。没有决策时的提示会直接给出
+   下一步命令：
+
+   ```powershell
+   python scripts/authority.py decide --kind publish --subject 3.3.0 `
+     --topic "Agensi 上架 3.3.0" --proposal "发布可移植协议层" `
+     --decision accept --by user --reason "用户要求上架" `
+     --approval-ref _work/approvals/publish-3.3.0.md
+   ```
+
+   `--approval-ref` 指向一份写有用户原话的批准文件；没有 `DSH_GOVERNANCE_SECRET` 时它是
+   "未认证的用户凭据"（命令行会打印 NOTICE），有 secret 时必须带 `--approval-token`。
+
+**每一次版本更新都需要新的批准**（`--subject` 换成新版本）。这是有意的：发布是 L1 操作，
+流程的意义就在于每个外发动作都有人签字。预览（`sync --preview`）同样受门约束。
+
+`check` 不联网、不过门，可以随时跑；`sync` 不带 `--yes` 只打印计划。
+
 ## 首次上架流程
 
 1. 账号：用 Google 账号登录 <https://www.agensi.io>，在 Creator Studio 打开 **Creator Mode**。

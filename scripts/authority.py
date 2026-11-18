@@ -56,6 +56,7 @@ BASE = {
     "target": "L1", "constraint": "L1", "scope": "L1",
     "permission": "L1", "release": "L1", "promote": "L1",
     "push": "L1", "acceptance": "L1", "budget-overrun": "L1",
+    "publish": "L1",
     "model-add": "L1", "plugin-add": "L1", "unknown": "L1",
     "direction": "L2", "architecture-change": "L2",
     "stack-change": "L2", "interface-change": "L2",
@@ -71,7 +72,7 @@ BASE = {
 }
 
 L1_OPS = {
-    "release", "promote", "push", "target-change", "constraint-change",
+    "release", "promote", "push", "publish", "target-change", "constraint-change",
     "scope-change", "permission", "plugin-add", "model-add",
 }
 L2_OPS = {

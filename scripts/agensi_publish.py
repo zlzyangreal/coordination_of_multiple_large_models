@@ -46,6 +46,7 @@ import json
 import os
 import re
 import secrets
+import subprocess
 import sys
 import time
 import urllib.error
@@ -672,6 +673,44 @@ def connect(root: Path, endpoint: str) -> McpClient:
     return client
 
 
+def workflow_gate(root: Path, version: str) -> tuple[bool, str]:
+    """Rule 14 + rule 34: a publish needs a fresh pin and an accepted L1 decision.
+
+    This is the boundary that was missing on 2026-11-18: 3.3.0 reached a marketplace while the
+    repository pin still said 3.0.5 and no decision had been recorded anywhere.
+    """
+    session = root / "scripts" / "session.py"
+    if not session.is_file():
+        return False, f"workflow gate: {session} is missing, so the pin cannot be verified"
+    proc = subprocess.run([sys.executable, str(session), "check", "--strict"],
+                          cwd=str(root), capture_output=True, text=True)
+    if proc.returncode != 0:
+        detail = (proc.stdout or "").strip() or (proc.stderr or "").strip()
+        return False, ("workflow gate: the session pin does not match this release.\n"
+                       + detail
+                       + "\nRe-pin first: python scripts/session.py pin --force")
+    scripts = str(root / "scripts")
+    if scripts not in sys.path:
+        sys.path.insert(0, scripts)
+    try:
+        import authority  # local import: the CLI still works where governance is not installed
+    except Exception as exc:  # noqa: BLE001
+        return False, f"workflow gate: authority.py is unavailable ({exc})"
+    try:
+        code, info = authority.guard(str(root), "publish", subject=version)
+    except Exception as exc:  # noqa: BLE001
+        return False, f"workflow gate: the authority guard failed ({exc})"
+    if not (info or {}).get("allowed"):
+        reason = (info or {}).get("reason") or "no accepted L1 decision"
+        return False, (
+            f"workflow gate: publish {version} refused (code {code}: {reason}).\n"
+            "Record the user's approval first, after they said yes:\n"
+            f'  python scripts/authority.py decide --kind publish --subject {version} '
+            f'--topic "Agensi publish {version}" --proposal "publish the Agensi listing" '
+            f'--decision accept --by user --reason "user approved this release"')
+    return True, str((info or {}).get("key") or "ok")
+
+
 def cmd_login(root: Path, args) -> int:
     try:
         login(root, endpoint=args.endpoint, scope=args.scope, timeout=args.timeout,
@@ -732,6 +771,12 @@ def cmd_sync(root: Path, args) -> int:
         print(f"  listing {listing['name']} - {listing['pricing_type']}")
         print("(no --yes: nothing was sent)")
         return 0
+
+    ok, detail = workflow_gate(root, version)
+    if not ok:
+        print(f"[STOP] {detail}", file=sys.stderr)
+        return 4
+    print(f"gate           ok ({detail})")
 
     client = connect(root, args.endpoint)
     creator = client.call("creator_status", {})

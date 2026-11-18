@@ -144,3 +144,18 @@ test('--version is accepted after the subcommand and drives the policy', { skip 
     await rm(root, { recursive: true, force: true })
   }
 })
+
+test('sync --yes refuses to publish when the session pin is stale', { skip }, async () => {
+  const root = await fixture({ version: '3.4.0', published: '3.3.0' })
+  try {
+    await mkdir(path.join(root, 'scripts'), { recursive: true })
+    await writeFile(path.join(root, 'scripts', 'session.py'),
+      'import sys\nprint("DEVIATION: contract updated")\nsys.exit(2)\n')
+    const result = run(root, ['sync', '--yes'])
+    assert.equal(result.code, 4)
+    assert.match(result.stderr, /workflow gate/)
+    assert.match(result.stderr, /pin/)
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})

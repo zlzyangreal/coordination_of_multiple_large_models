@@ -13,12 +13,20 @@ Two or more models, one deliverable. Decide who does what, how artifacts are han
 
 ## When to use
 
+While the switch is ON, **every** task runs the workflow — pin, board, plan gate, independent
+review, delivery gate — including work a single agent could do alone. Task size is not a criterion;
+"it looked small" is exactly how 3.3.0 reached a marketplace with a stale pin and no reviewer.
+
 - 2+ models, or lead + subagents, produce one artifact.
 - An artifact is sent to another model for review and its findings will be adopted.
 - Reconnects, timeouts, proxy errors, or reviews that no longer match the file.
 - Work spanning sessions or days.
+- Single-agent work that still changes a version, a release, a published artifact or a gate.
 
-Skip for single-model, single-file, one-shot work — but still run `scripts/check_env.py`.
+The only exemption is the user's, declared explicitly and recorded (`authority.py decide` at L1/L2,
+with `--approval-ref` pointing at their words). An exemption is never inferred from task size, and
+it survives only until the next mandate version. While the switch is OFF the plugin is not in force
+and only `scripts/check_env.py` still runs.
 
 ## Non-negotiables
 
@@ -64,6 +72,10 @@ Skip for single-model, single-file, one-shot work — but still run `scripts/che
 40. **Load the rules before any controlled action.** When the switch is ON, the host injects the forty-rule contract and the session must acknowledge it before any tool call except `coordination status`; an invalid or missing contract keeps a deny guard, is logged at I0 and fails closed. Enforcement must not depend on the agent choosing to read `SKILL.md`, and the denial must name the required acknowledgement.
 
 ## Workflow
+
+No board, no task: step 0 also registers the task (`orchestration.py init`) and its nodes. The board
+is the only record of who owns a node, which review covered it and which commit was delivered; a
+delivery or publish without one has no receipt chain and is refused by the gates below.
 
 | # | Step | Gate | Read |
 |---|---|---|---|
@@ -134,7 +146,7 @@ paths only (rule 38).
 | `python scripts/check_docs.py --root . [--run-tests]` | Version/count/trigger/rule/path/script/asset consistency |
 | `python scripts/check_rules.py [--root .]` | Verify the 40-rule manifest matches `SKILL.md` paragraphs and the v2.4.0 baseline hash |
 | `python scripts/release.py --version X.Y.Z --note "..." [--dry-run] [--no-push]` | Check docs, run the real suite, update version/count/changelog, commit, tag, push |
-| `python scripts/agensi_publish.py <login\|status\|check\|package\|sync> [--yes]` | Agensi listing: one-time OAuth, version policy (minor/major only), submit or update; `check` is offline, `sync` writes only with `--yes` |
+| `python scripts/agensi_publish.py <login\|status\|check\|package\|sync> [--yes]` | Agensi listing: one-time OAuth, version policy (minor/major only), submit or update; `check` is offline; `sync --yes` first passes the workflow gate (fresh pin + accepted L1 `publish` decision via `authority.py guard`) |
 | `python scripts/models.py <init\|providers\|add\|key\|account\|team\|list\|discover\|test\|use\|route\|chains\|call\|plan\|health\|budget\|doctor>` | Per-project model access; `call` infers `produce` when role is omitted |
 | `python scripts/quota.py [--source {auto,live,log}] [--json] [--remaining 62 --minutes 210]` | 5 h / weekly remaining, tier S/A/B/C/R/U, who produces, call shape |
 | `python scripts/validate_result.py --result <json> [--envelope <yaml>]` | Schema + echo + unit coverage + facts/test_refs validation; exit 1 blocks adoption |

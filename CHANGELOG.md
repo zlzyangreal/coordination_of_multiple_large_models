@@ -14,6 +14,11 @@ Agensi listing: a portable protocol layer, synced on minor and major versions on
   发布状态写入 `agensi/publish-state.json`（随仓库），令牌只进 `_work/agensi/token.json`。
 - **发布门**：`sync` 默认只打印计划，`--yes` 才真正提交；首次提交先出草稿预览再确认，
   之后带 `CHANGELOG.md` 对应版本段落调用 `update_skill`。
+- **工作流默认开启（加严）**：删除"单模型一次性可跳过"的旧豁免；开关 ON 时所有任务都要有 pin、
+  看板、独立评审与交付记录，例外只能由用户声明并经 `authority.py decide` 记录。
+- **publish 进入 L1**：`authority.py` 新增 `publish` 受控操作；`agensi_publish.py` 在 `--yes` 前先跑
+  `session.py check --strict`（pin 必须等于当前版本）再跑 `authority.guard("publish")`，任一不过即退出 4，
+  联网前停止。3.3.0 那次"pin 停在 3.0.5 却已发布"的路径由此关闭。
 
 ## 3.2.0 - 2026-11-17
 

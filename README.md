@@ -4,7 +4,7 @@
 
 - 仓库：<https://github.com/zlzyangreal/coordination_of_multiple_large_models>
 - 版本：3.3.0（2026-11-18）
-- 当前离线自测：373 项（mock providers，不联网）；Node 测试 101 项
+- 当前离线自测：373 项（mock providers，不联网）；Node 测试 103 项
 - 上一代：`多模型协作Spec.md` v2.4.1，已冻结，仅作留档
 
 ## 能力一览
@@ -16,7 +16,8 @@
 - **版本锁定与一键审核**：运行版本与 digest 必须由你验证；新版本给出「✓ 通过并启用 / ✗ 不通过」，不通过会记录原因、写 I1 日志并保持未验证。
 - **治理与自举**：委托书、L1/L2/L3 决策、评审轮次预算、方案门、基线对比、候选版晋升与回滚。
 - **可选扩展与本地日志**：声明式扩展（安装即禁用、需单独启用）；I0–I3 日志只落本地。
-- **Agensi 上架同步**：可移植协议层免费上架 Agensi；`agensi_publish.py` 只在次版本/大版本变化时同步（3.2.0 → 3.3.0 同步，3.3.0 → 3.3.1 不同步），OAuth 一次授权，`--yes` 才发布。
+- **工作流默认开启**：开关 ON 时所有任务都走 pin → 看板（`orchestration.py`）→ 方案门 → 独立评审 → 交付门，单 agent 运维也不例外；例外只能由用户显式声明并记录（`authority.py decide`），不能从任务大小推断。
+- **Agensi 上架同步**：可移植协议层免费上架 Agensi；`agensi_publish.py` 只在次版本/大版本变化时同步（3.2.0 → 3.3.0 同步，3.3.0 → 3.3.1 不同步），OAuth 一次授权；`sync --yes` 前强制两道门——`session.py check --strict` 的 pin 一致 + `authority.py guard(publish)` 的 L1 决策，不过门不发任何请求。
 
 ## 版本核心
 
