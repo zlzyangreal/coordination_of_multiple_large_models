@@ -164,3 +164,21 @@ python scripts/agensi_publish.py sync --yes
 
 `check` 在 patch 版本会直接给 `skip`，所以可以安全地放进每次发版后的固定步骤：
 只有次版本/大版本才会真的调用平台。
+
+## 已知限制（阻塞下一次发布）
+
+3.3.0 的发布器经过独立评审（codex/gpt-5.6-sol，信封 + 测试证据）。评审结论为 **fail**：
+以下 5 条在 2026-11-18 的看板 `V33-AGENSI` 上仍为 `open`，`can_deliver=false`。
+**下一次同步（3.4.0）之前必须关闭 014/015/016；017 建议一并处理。**
+
+| id | 严重度 | 位置 | 问题 |
+|---|---|---|---|
+| AGENSI-014 | high | `scripts/authority.py:586` | 没有 `DSH_GOVERNANCE_SECRET` 时，L1 批准只是调用方自报的 `--by user`（规则 38 的已知边界）。同一个 agent 可以自己写批准。要么在宿主配置 secret 走 HMAC，要么由人类显式接受这个边界——这是 L1 决定，不能由 agent 默认接受。 |
+| AGENSI-015 | high | `scripts/agensi_publish.py:258` | 批准绑定的是 skill 包 zip，不覆盖 listing 文案、价格、changelog，也不覆盖预览返回的 `draft_id`。修法：批准一个规范化 manifest（action + 全部字段 + 每个文件 hash + changelog），发布时按 manifest 重建并比对。 |
+| AGENSI-016 | medium | `scripts/agensi_publish.py:937` | 版本比较只读本地 `publish-state.json`，更新前不读线上版本；跨工作区/手工发布时可能重复或降级。修法：锁内先 `my_skills` 对账，再决定。 |
+| AGENSI-017 | low | `scripts/agensi_publish.py:412` | `urllib` 自动跟随重定向，可能把 `Authorization` 带去跨源地址。修法：认证请求禁用重定向，或在处理器里拒绝跨源。 |
+| AGENSI-018 | low | `tests/agensi.test.mjs:148` | 成功路径没有假 MCP 服务器的集成测试；门禁的正向路径只靠人工验证。 |
+
+这些是**发布器保证强度**的问题，不影响已经上线的 3.3.0 内容。上线状态：
+`https://www.agensi.io/skills/multi-model-coordination`（free，security scan passed）。
+

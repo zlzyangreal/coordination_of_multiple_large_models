@@ -40,6 +40,12 @@ Agensi listing: a portable protocol layer, synced on minor and major versions on
   并只授权当前用户/SYSTEM/Administrators，校验失败即拒绝保留（此前 `chmod` 在 Windows 上不生效）；
   锁内重算后补上 `refuse` 分支，避免并发降级；AGENSI-013（成功路径的 MCP 假服务器测试）记为待办、
   不属于阻塞项。
+- **评审结论：fail（发布器，不影响已上线内容）**。第 4/5 轮评审确认 001～012 已关闭，但新增
+  AGENSI-014（无 host secret 时 L1 批准只是自报凭据，属规则 38 的边界，需人类决定）、
+  AGENSI-015（批准只绑 zip，不覆盖 listing 字段/价格/changelog/draft_id）、AGENSI-016（版本只比对本地状态）、
+  AGENSI-017（重定向可能带 token）、AGENSI-018（成功路径缺集成测试）。看板 `V33-AGENSI` 记录为
+  review fail、`can_deliver=false`；清单见 `docs/agensi.md#已知限制（阻塞下一次发布）`。
+  3.3.0 listing 本身已上线：<https://www.agensi.io/skills/multi-model-coordination>。
 
 ## 3.2.0 - 2026-11-17
 
