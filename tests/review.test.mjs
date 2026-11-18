@@ -1,11 +1,14 @@
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 import { mkdtemp, rm } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
+import { fileURLToPath } from 'node:url'
 import { StateStore } from '../lib/state.js'
 
-const VERSION = '3.2.0'
+const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)))
+const VERSION = JSON.parse(readFileSync(path.join(root, 'package.json'), 'utf8')).version
 const DIGEST = 'b'.repeat(64)
 
 async function makeStore(tmp, overrides = {}) {

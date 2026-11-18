@@ -1,5 +1,20 @@
 # Changelog
 
+## 3.3.0 - 2026-11-18
+
+Agensi listing: a portable protocol layer, synced on minor and major versions only.
+
+- **可移植协议层**：新增 `agensi/skill/`（`SKILL.md` + `references/envelopes.md` +
+  `references/checklists.md`），面向任意 Agent 的 12 条契约、信封与结果 schema、评审/交付/故障清单；
+  不引用本仓库脚本，可在 Claude Code、Cursor、Codex、DSH 等任意 Agent 内直接使用。
+- **推平台**：新增 `scripts/agensi_publish.py`——OAuth 2.1 + PKCE（动态客户端注册，无 API Key）、
+  极简 MCP Streamable HTTP 客户端、`submit_skill` / `update_skill` / `my_skills`、离线 `check`
+  与手工上传用的 zip 导出。
+- **版本策略**：`3.2.0 → 3.3.0` 同步，`3.3.0 → 3.3.1` 不同步；`--force` 单次覆盖，低版本拒绝；
+  发布状态写入 `agensi/publish-state.json`（随仓库），令牌只进 `_work/agensi/token.json`。
+- **发布门**：`sync` 默认只打印计划，`--yes` 才真正提交；首次提交先出草稿预览再确认，
+  之后带 `CHANGELOG.md` 对应版本段落调用 `update_skill`。
+
 ## 3.2.0 - 2026-11-17
 
 Workflow panel: every board at once, a typed model picker, and rule-disabled options.

@@ -9,10 +9,11 @@ import { packageDigest } from './lib/paths.js'
 
 const root = path.dirname(fileURLToPath(import.meta.url))
 const pkg = JSON.parse(readFileSync(path.join(root, 'package.json'), 'utf8'))
+const skillVersion = /^ {2}version:\s*(\S+)$/m.exec(readFileSync(path.join(root, 'SKILL.md'), 'utf8'))?.[1]
 const contract = await loadContract(root)
 const digest = await packageDigest(root)
 const checks = [
-  { id: 'version', ok: pkg.version === '3.2.0', detail: pkg.version },
+  { id: 'version', ok: pkg.version === skillVersion, detail: pkg.version },
   { id: 'engines.dsh', ok: pkg.engines?.dsh === '0.2.1-rc.3', detail: pkg.engines?.dsh },
   { id: 'bundle', ok: pkg.dsh?.bundle?.patch === './cordis.patch.yml', detail: pkg.dsh?.bundle?.patch },
   { id: 'client', ok: pkg.dsh?.client?.platform === 'web', detail: pkg.dsh?.client?.platform },

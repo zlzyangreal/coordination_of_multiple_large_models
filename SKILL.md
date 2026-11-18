@@ -2,8 +2,8 @@
 name: coordination_of_multiple_large_models
 description: Orchestrate two or more LLMs on one deliverable, across code, documents and data — capability check, model verification, quota-tiered routing, per-project multi-provider access (free/keyless, API key, custom base URL, local server, account-token import), task contract, request/result envelopes, zero-write review calls, schema-enforced review gate, plan-review gate, review-call budget, test evidence in the envelope, delivery gate, release/documentation checks, failure handling, stable-version-drives-candidate self-bootstrap with dual workspaces, baseline comparison and gated promotion/rollback, and human-governed decision authority (mandate, idea intake, L1/L2/L3 decisions, scoped grants, execution guards, decision records). It is also a DSH-native bundle with one default-OFF global switch, a host-injected forty-rule contract that must be acknowledged before any tool call, a version lock with user-verified activation, declaration-driven optional extensions (install disabled, activate separately), and local-only I0–I3 logs. Use for multi-model routing, adding or switching model providers, GPT/Codex reviews, plan-first production, subagent handoffs, adopting review findings, model outages or proxy issues, workspace migration, releases, self-bootstrap iteration, promotion or rollback, human approval/authorization boundaries, decision records, DSH plugin installation/enable/disable/configuration, global switch, rule-first contract, version lock, optional extensions, one-click install and local log triage. 触发词：多模型协作、模型分工、模型路由、模型接入、模型团队、入队审批、方案设计、架构设计、技术选型、计划与分发分离、模型切换、免费模型、API Key、自定义 API 地址、Ollama、本地模型、额度分档、GPT 额度利用率、GPT 评审、codex 评审、子代理协作、评审结论采纳、模型卡顿、codex 超时、代理问题、协作复盘、方案评审门、评审轮次预算、测试证据、工作区身份、发版一致性检查、自举迭代、稳定版、候选版、双工作区、版本晋升、回退演练、决策权、人类治理、授权范围、审批拦截、L1/L2/L3、任务预授权、决策记录、思路评估、DSH 插件、插件安装、插件启停、总开关、规则先行、契约确认、版本锁定、验证后激活、可选扩展、一键安装、本地日志、I0-I3。
 metadata:
-  version: 3.2.0
-  updated: 2026-11-17
+  version: 3.3.0
+  updated: 2026-11-18
 allowed-tools: Read, Write, Edit, Bash
 ---
 
@@ -134,6 +134,7 @@ paths only (rule 38).
 | `python scripts/check_docs.py --root . [--run-tests]` | Version/count/trigger/rule/path/script/asset consistency |
 | `python scripts/check_rules.py [--root .]` | Verify the 40-rule manifest matches `SKILL.md` paragraphs and the v2.4.0 baseline hash |
 | `python scripts/release.py --version X.Y.Z --note "..." [--dry-run] [--no-push]` | Check docs, run the real suite, update version/count/changelog, commit, tag, push |
+| `python scripts/agensi_publish.py <login\|status\|check\|package\|sync> [--yes]` | Agensi listing: one-time OAuth, version policy (minor/major only), submit or update; `check` is offline, `sync` writes only with `--yes` |
 | `python scripts/models.py <init\|providers\|add\|key\|account\|team\|list\|discover\|test\|use\|route\|chains\|call\|plan\|health\|budget\|doctor>` | Per-project model access; `call` infers `produce` when role is omitted |
 | `python scripts/quota.py [--source {auto,live,log}] [--json] [--remaining 62 --minutes 210]` | 5 h / weekly remaining, tier S/A/B/C/R/U, who produces, call shape |
 | `python scripts/validate_result.py --result <json> [--envelope <yaml>]` | Schema + echo + unit coverage + facts/test_refs validation; exit 1 blocks adoption |
@@ -148,6 +149,21 @@ paths only (rule 38).
 Helpers used by the commands above (not usually invoked directly): `scripts/gate_common.py`, `scripts/model_config.py`, `scripts/model_http.py`, `scripts/model_registry.py`, `scripts/model_route.py`.
 
 Contracts and templates: `assets/result.schema.json`, `assets/call.schema.json`, `assets/facts-pack.example.md`, `assets/envelope.example.yaml`, `assets/providers.registry.json`, `assets/models.config.example.json`, `assets/mandate.example.json`, `assets/decision-record.example.json`.
+
+## Agensi listing
+
+The portable protocol layer (`agensi/skill/`, bilingual, MIT) is listed free on
+<https://www.agensi.io>. `scripts/agensi_publish.py` keeps it in step with the release:
+
+- `check` is offline and read-only: it prints `submit` (first listing), `update` (major/minor
+  change), `skip` (patch-only) or `refuse` (lower than live).
+- Policy: **3.2.0 → 3.3.0 syncs; 3.3.0 → 3.3.1 does not.** `--force` overrides for one run.
+- `sync` needs `--yes`; the first run submits a preview and confirms it, later runs call
+  `update_skill` with the changelog section for that version.
+- Sign-in is OAuth 2.1 + PKCE (dynamic client registration, no API key): `login` opens the browser
+  once and stores a refreshable token in `_work/agensi/token.json`; `_work/` is never committed.
+- `agensi/publish-state.json` records the published slug and version, so every machine agrees on
+  what is live. Publishing is an L1 action: it runs only when the human asks for it.
 
 ## Scope
 

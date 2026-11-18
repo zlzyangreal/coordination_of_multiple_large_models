@@ -1,0 +1,117 @@
+# 上架 Agensi
+
+[Agensi](https://www.agensi.io) 是一个 SKILL.md 市场：买家通过网站或 MCP 连接器把 skill 加载进
+自己的 Agent（Claude Code、Cursor、Codex、DSH……）。本仓库以**免费、开源（MIT）**方式上架
+可移植协议层，并让每次发版只在**次版本 / 大版本**变化时同步过去。
+
+## 上架内容
+
+| 目录 | 作用 |
+|---|---|
+| `agensi/skill/SKILL.md` | 上架用的可移植 skill：12 条契约、角色表、工作流、信封、版本迭代、中文速览 |
+| `agensi/skill/references/envelopes.md` | 请求/结果信封字段、采纳流程、常见失败模式 |
+| `agensi/skill/references/checklists.md` | 预检、方案、分发、评审、交付、故障排查清单 |
+| `agensi/listing.json` | 上架文案与元数据（名称、摘要、描述、标签、用例、权限、示例） |
+| `agensi/publish-state.json` | 已发布的 slug 与版本（随仓库提交，保证多机一致） |
+| `scripts/agensi_publish.py` | 登录、检查、打包、提交/更新 |
+
+`agensi/skill/` 刻意**不引用**本仓库的 `scripts/*.py`：Agensi 把脚本写到临时文件单独执行，
+跨文件 import 会失败。所以平台上的是协议层，完整工具链留在 GitHub 仓库里（listing 描述中已注明）。
+
+## 一次性授权
+
+```powershell
+python scripts/agensi_publish.py login
+```
+
+1. 脚本做 OAuth 2.1 发现 + 动态客户端注册（PKCE S256，公共客户端，无 API Key）。
+2. 打印授权链接并打开默认浏览器；用 **zlzyangreal@gmail.com** 的 Google 账号登录并同意。
+3. 回调落到 `http://127.0.0.1:<随机端口>/callback`，脚本换到 token，写入
+   `_work/agensi/token.json`（0600，git 忽略），有效期 1 小时，用 refresh token 续期 30 天。
+
+之后每天运行只需要有效的 refresh token；过期就再 `login` 一次。
+
+> Agensi 规定**一个账号只能有一个 Agent 连接**：新客户端拿到 token 后，旧客户端会失效。
+> 如果同一账号还接着别的 Agent，请只用其中一个。
+
+## 命令
+
+```powershell
+python scripts/agensi_publish.py check            # 离线：打印本次发版会不会同步
+python scripts/agensi_publish.py check --json     # 给 CI / release.py 用
+python scripts/agensi_publish.py package          # 生成手工上传用 zip，打印 sha256
+python scripts/agensi_publish.py status           # creator_status + my_skills
+python scripts/agensi_publish.py sync             # 只打印计划（不发送）
+python scripts/agensi_publish.py sync --yes       # 真正提交 / 更新
+python scripts/agensi_publish.py sync --preview   # 首次提交只出草稿预览，不确认
+```
+
+退出码：`0` 正常/跳过/预览，`2` 包或状态错误，`3` 需要登录，`4` 平台错误，`5` 版本策略拒绝。
+
+## 版本策略
+
+| 已发布 | 当前 | 动作 |
+|---|---|---|
+| —— | 3.3.0 | `submit`：首次上架（先出草稿预览，再确认） |
+| 3.2.0 | 3.3.0 | `update`：同步 |
+| 3.3.0 | 3.3.1 | `skip`：**不同步**（patch 不发版） |
+| 3.3.0 | 3.3.1 + `--force` | `update`：单次强制同步 |
+| 3.3.0 | 3.1.0 | `refuse`：低于线上版本，拒绝 |
+| 3.3.0 | 3.3.0 | `none`：无需动作 |
+
+- 判定用 `package.json` 的 `version` 与 `agensi/publish-state.json` 的 `version` 比较；
+  次版本/大版本任一变化才同步。
+- 打包时会用当前 release 版本覆盖 `agensi/skill/SKILL.md` front matter 里的 `version`，
+  避免源文件版本漂移。
+- 更新时 changelog 取 `CHANGELOG.md` 中 `## <version>` 段落（最多 2000 字符）。
+
+## 首次上架流程
+
+1. 账号：用 Google 账号登录 <https://www.agensi.io>，在 Creator Studio 打开 **Creator Mode**。
+   免费 skill 不需要绑定收款；付费/订阅才需要 Stripe 或 USDC。
+2. 授权：`python scripts/agensi_publish.py login`。
+3. 预览：`python scripts/agensi_publish.py sync --preview`，检查草稿（文件、名称、摘要、价格）。
+4. 提交：`python scripts/agensi_publish.py sync --yes`（会带上 `draft_id` 确认上架）。
+5. 审核：8 项自动安全检查 + AI 审阅 + 人工，通常 24–48 小时；通过后 `status` 里能看到 `live`。
+6. 失败：`status` 会给出 rejected 原因与未通过的安全检查项；修完重新 `sync --yes`。
+
+## 手工兜底
+
+如果授权不可用（例如只想人工上传）：
+
+```powershell
+python scripts/agensi_publish.py package
+```
+
+把生成的 `_work/agensi/<slug>-<version>.zip` 上传到 <https://www.agensi.io/dashboard/submit>，
+价格选 **Free**。zip 与 `sync` 发送的文件完全一致（同一套校验：≤100 文件、≤5 MB、纯文本、UTF-8）。
+
+## 安全与状态
+
+- 令牌：`_work/agensi/token.json`，0600，`_work/` 在 `.gitignore` 中，永不提交。
+- 发布状态：`agensi/publish-state.json`，记录 slug / 版本 / 包哈希 / 时间，随仓库走。
+- 平台侧只有文本文件；脚本不会上传 `_work/`、`.git/`、构建产物。
+- 发布是 L1 动作：`sync` 不带 `--yes` 不发送任何写请求；`check` 完全不联网。
+
+## 排错
+
+| 现象 | 处理 |
+|---|---|
+| `[FAIL] not signed in` / HTTP 401 | 重新 `login`；refresh token 过期或已被新客户端顶掉 |
+| `token refresh failed` | 同上；Agensi 的 refresh token 用后即换，旧 token 复用会导致整条连接失效 |
+| 名称已被占用 / 包重复 | 改 `agensi/listing.json` 的 `name`；名称全站唯一，重复包会被拦 |
+| 安全扫描不通过 | `status` 看未通过项；常见是隐藏文件、二进制、可疑网络调用 |
+| 审核被拒 | 按 `status` 的 rejection reason 修改；线上旧版本继续服务，不受影响 |
+| `--yes` 后 24h 内没有 live | 正常审核窗口；用 `status` 查 `pending` |
+
+## 与发版的关系
+
+推荐顺序：`release.py` 完成版本、测试、tag、push 之后，再执行
+
+```powershell
+python scripts/agensi_publish.py check
+python scripts/agensi_publish.py sync --yes
+```
+
+`check` 在 patch 版本会直接给 `skip`，所以可以安全地放进每次发版后的固定步骤：
+只有次版本/大版本才会真的调用平台。

@@ -7,10 +7,13 @@ import { fileURLToPath } from 'node:url'
 
 const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)))
 const pkg = JSON.parse(readFileSync(path.join(root, 'package.json'), 'utf8'))
+const skill = readFileSync(path.join(root, 'SKILL.md'), 'utf8')
+const skillVersion = /^ {2}version:\s*(\S+)$/m.exec(skill)?.[1]
 
 test('bundle manifest is complete and dependency-free', () => {
   assert.equal(pkg.name, 'dsh-multimodel-coordination')
-  assert.equal(pkg.version, '3.2.0')
+  assert.equal(pkg.version, skillVersion, 'package.json and SKILL.md versions must agree')
+  assert.match(pkg.version, /^\d+\.\d+\.\d+$/)
   assert.equal(pkg.engines.dsh, '0.2.1-rc.3')
   assert.equal(pkg.dsh.bundle.patch, './cordis.patch.yml')
   assert.equal(pkg.dsh.client.platform, 'web')

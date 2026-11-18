@@ -1,0 +1,51 @@
+{
+  "schema": 1,
+  "listing": {
+    "name": "Multi-Model Coordination",
+    "summary": "Decide who produces, who reviews, and when a review actually counts across two or more models - plan gate, version-locked envelopes, independent review, evidence-gated delivery.",
+    "description": "Two or more models, one deliverable. This skill fixes the parts that quietly fail: who owns the work, what a hand-off must contain, when a review is trustworthy, and how to stop without degrading.\n\n**What it gives your agent**\n\n- Roles with hard boundaries: lead, planner, producer, reviewer, dispatcher. One owner per artifact, and a producer never signs off its own work.\n- A 12-rule contract that survives model switches: no envelope, no review; schema before adoption; reviewer writes nothing; independence is a property of the model pair, not the prompt.\n- A plan gate: the planner restates the requirement, compares at least two approaches, names a stack and a work-package table, and a different model family reviews the plan before anything is produced.\n- Version-locked review: artifact hash plus modification time in every envelope; a reviewer that saw an older file is discarded, not argued with.\n- Evidence gates: test command, exit code, log hash and a verbatim excerpt travel with the review; a review with no behavioural evidence is static-only and must say so.\n- Budgets and stop lines: two review rounds per milestone by default, a written reason for a third, and a hard stop instead of a silent retry loop.\n- Safe version iteration: stable drives candidate, baseline comparison, human approval of the exact commit, promotion with a rollback that does not depend on the candidate.\n- Routing and failure triage for rate limits, quota, proxies, stale context and model swaps.\n\n**Includes** the protocol skill plus two reference files: `references/envelopes.md` (request and result shapes, adoption procedure, common failure modes) and `references/checklists.md` (pre-flight, plan, dispatch, review, delivery and failure-triage checklists you can copy).\n\n**Who it is for** developers and teams already calling more than one model - GPT plus Claude, DeepSeek plus Qwen, or a lead agent with subagents - who need the output to be reviewable instead of a pile of merged opinions.\n\n**Free and open source.** The portable protocol is what you get here. The full reference implementation - model registry, routing, review budgets, plan gate, iteration and promotion, as a DeepSeek Harness plugin - is MIT-licensed at https://github.com/zlzyangreal/coordination_of_multiple_large_models\n\nNo install, no API key of its own, no network calls from the skill: it changes how your agent already uses the models it has.",
+    "pricing_type": "free",
+    "tags": [
+      "agents-orchestration",
+      "llm-ops",
+      "code-quality-review",
+      "workflow-automation"
+    ],
+    "keywords": [
+      "multi-model",
+      "model routing",
+      "llm orchestration",
+      "independent review",
+      "subagents",
+      "plan review",
+      "code review",
+      "model fallback"
+    ],
+    "use_cases": [
+      "Split a feature across a planner model, a producer model and an independent reviewer",
+      "Stop a model from approving its own output",
+      "Decide which model to use when one is rate-limited, out of quota or timing out",
+      "Run a plan review before any code is written",
+      "Reject a review that was written against an older version of the file",
+      "Hand a task to a subagent without losing the acceptance criteria"
+    ],
+    "requirements": [],
+    "requirement_note": "Works with any agent that can call two or more models, directly or through subagents. Nothing to install.",
+    "nothing_needed": true,
+    "permissions": {
+      "tools": [
+        "bash",
+        "read",
+        "write"
+      ],
+      "hosts": [],
+      "file_scopes": [
+        "project files under the working directory"
+      ],
+      "notes": "The skill only instructs your agent. It makes no network calls of its own; model calls are the ones your agent already makes."
+    },
+    "sample_input": "Plan and build the retry logic in src/fetcher.ts. Use one model to produce it and a different family to review it. I only want it delivered if the tests pass.",
+    "sample_output": "A plan with two approaches and a work-package table, a plan review from a different model family, one producer run on src/fetcher.ts, an independent review with findings verified at source, the test command and exit code recorded in the envelope, and a delivery summary that states which findings were accepted, rejected or deferred.",
+    "docs_url": "https://github.com/zlzyangreal/coordination_of_multiple_large_models"
+  }
+}

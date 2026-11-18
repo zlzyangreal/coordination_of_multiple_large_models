@@ -3,8 +3,8 @@
 把「2 个及以上大模型怎么协作」变成可执行、可审计的流程：谁负责哪个节点、模型按什么规则选、评审是不是真独立、结果能不能信、新版本什么时候允许生效。插件挂在 DSH 右侧栏，工作流、模型选择与版本审核都在界面里完成。
 
 - 仓库：<https://github.com/zlzyangreal/coordination_of_multiple_large_models>
-- 版本：3.2.0（2026-11-17）
-- 当前离线自测：373 项（mock providers，不联网）；Node 测试 94 项
+- 版本：3.3.0（2026-11-18）
+- 当前离线自测：373 项（mock providers，不联网）；Node 测试 101 项
 - 上一代：`多模型协作Spec.md` v2.4.1，已冻结，仅作留档
 
 ## 能力一览
@@ -16,6 +16,7 @@
 - **版本锁定与一键审核**：运行版本与 digest 必须由你验证；新版本给出「✓ 通过并启用 / ✗ 不通过」，不通过会记录原因、写 I1 日志并保持未验证。
 - **治理与自举**：委托书、L1/L2/L3 决策、评审轮次预算、方案门、基线对比、候选版晋升与回滚。
 - **可选扩展与本地日志**：声明式扩展（安装即禁用、需单独启用）；I0–I3 日志只落本地。
+- **Agensi 上架同步**：可移植协议层免费上架 Agensi；`agensi_publish.py` 只在次版本/大版本变化时同步（3.2.0 → 3.3.0 同步，3.3.0 → 3.3.1 不同步），OAuth 一次授权，`--yes` 才发布。
 
 ## 版本核心
 
@@ -108,6 +109,7 @@ New-Item -ItemType Junction `
 - `scripts/check_docs.py`
 - `scripts/check_rules.py`
 - `scripts/release.py`
+- `scripts/agensi_publish.py`
 - `scripts/gate_common.py`
 - `scripts/models.py`
 - `scripts/model_registry.py`
@@ -127,10 +129,26 @@ New-Item -ItemType Junction `
 
 完整说明见 `SKILL.md` 脚本表。
 
+## 上架 Agensi（可选）
+
+`agensi/skill/` 是可移植的协议层（英文正文 + 中文速览，MIT），免费上架 <https://www.agensi.io>：
+
+```powershell
+python scripts/agensi_publish.py login      # 一次性 OAuth（浏览器里用 zlzyangreal@gmail.com 授权）
+python scripts/agensi_publish.py check      # 离线判断：submit / update / skip / refuse
+python scripts/agensi_publish.py sync --yes # 首次提交；之后按次版本/大版本同步
+```
+
+- 版本策略：3.2.0 → 3.3.0 同步；3.3.0 → 3.3.1 不同步（`--force` 可单次覆盖）；低版本直接拒绝。
+- 首次 `sync` 先返回草稿预览再确认；之后调用 `update_skill`，changelog 取 `CHANGELOG.md` 对应段落。
+- 状态在 `agensi/publish-state.json`（随仓库），令牌在 `_work/agensi/token.json`（不进 git，0600）。
+- 细节、手工上传兜底与排错：`docs/agensi.md`。
+
 ## 更新日志
 
 | 版本 | 日期 | 变更 |
 |---|---|---|
+| 3.3.0 | 2026-11-18 | 上架 Agensi：新增可移植协议层 `agensi/skill/`（SKILL.md + 信封/清单参考，中英双语）与 `scripts/agensi_publish.py`（OAuth 2.1 + PKCE 动态注册、MCP Streamable HTTP 客户端、submit/update、离线 `check`、zip 导出）；同步策略为次版本/大版本才发布（3.2.0 → 3.3.0），patch 不同步；373 项离线自测 |
 | 3.2.0 | 2026-11-17 | 多任务同页工作流面板、可输入模型选择、规则禁用与一键版本审核；373 项离线自测 |
 | 3.1.0 | 2026-11-17 | v3.1.0 协作工作流：`scripts/orchestration.py`（T1–T11、I1–I8、手动模型优先、独立评审、返工、交付门禁、回执链）、`lib/workflow.js` 与 `/_multimodel/workflow*`（SSE、模型目录、`subagent` 派发校验）、右侧栏工作流视图与节点模型切换、`docs/workflow.md`；78 项 Node 测试、373 项离线自测 |
 | 3.0.5 | 2026-11-16 | Patch: the mandate no longer carries a wall-clock minute budget; only the call budget is enforced.；331 项离线自测 |
