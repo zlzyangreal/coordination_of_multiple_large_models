@@ -82,25 +82,35 @@ python scripts/agensi_publish.py sync --yes --preview   # 首次提交只出草�
    下一步命令：
 
    ```powershell
+   python scripts/agensi_publish.py package          # 产出 zip，并打印它的 sha256
    python scripts/authority.py decide --kind publish --subject 3.3.0 `
      --topic "Agensi 上架 3.3.0" --proposal "发布可移植协议层" `
      --decision accept --by user --reason "用户要求上架" `
-     --approval-ref _work/approvals/publish-3.3.0.md
+     --approval-ref _work/approvals/publish-3.3.0.md `
+     --artifact _work/agensi/multi-model-coordination-3.3.0.zip
    ```
 
-   `--approval-ref` 指向一份写有用户原话的批准文件；没有 `DSH_GOVERNANCE_SECRET` 时它是
-   "未认证的用户凭据"（命令行会打印 NOTICE），有 secret 时必须带 `--approval-token`。
+   两个参数都不能少：`--approval-ref` 指向写有用户原话的批准文件（没有
+   `DSH_GOVERNANCE_SECRET` 时是"未认证的用户凭据"，命令行会打印 NOTICE；有 secret 时必须带
+   `--approval-token`），`--artifact` 把批准绑定到那个 zip 的字节上。zip 是确定性构建
+   （固定时间戳），同样的内容两次打包 sha256 相同；发布时会重新打包并比对，
+   包在批准之后被改过就会拒绝。
 
 **每一次版本更新都需要新的批准**（`--subject` 换成新版本）。这是有意的：发布是 L1 操作，
 流程的意义就在于每个外发动作都有人签字。预览（`sync --yes --preview`）同样受门约束。
 
-门的判定是 fail-closed 的，三个细节容易踩：
+门的判定是 fail-closed 的，几个细节容易踩：
 
 - **治理必须已初始化**。仓库里没有 `_work/governance/` 时，`guard` 会返回
   `governance disabled` 并标 `allowed`，脚本不把它当作许可：没有决策记录就不发。
 - **pin 的版本必须等于发布版本**。`session.py` 只比对仓库 `SKILL.md`，所以脚本自己读
   `_work/skill_pin.json` 再比一次；`sync --version 9.0.0` 在 3.3.0 的 pin 下会被拒。
 - **包内符号链接直接拒绝**，避免把包外内容以包内路径上传；token 以 0600 原子写入。
+- **锁与待定标记**：状态在拿到 `.sync.lock` 之后重新读取并重算；远端调用前写
+  `pending-<version>.json`。若上一次结果不明，`--resolve-pending` 会先查 `my_skills` 对账，
+  已落地就只补本地状态，没落地还要再加 `--reissue` 才会重发。
+- **预览可续**：`--preview` 会把 `draft_id` 存到 `_work/agensi/draft-<version>.json`，
+  下一次 `sync --yes` 确认的是同一个草稿，而不是重新建一个。
 
 `check` 不联网、不过门，可以随时跑；`sync` 不带 `--yes` 只打印计划。
 

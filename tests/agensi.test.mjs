@@ -186,3 +186,26 @@ test('a non-object publish state is reported, not a traceback', { skip }, async 
     await rm(root, { recursive: true, force: true })
   }
 })
+
+test('the approval zip is deterministic', { skip }, async () => {
+  const root = await fixture({ version: '3.3.0' })
+  try {
+    const first = run(root, ['package']).stdout.match(/sha256 ([0-9a-f]+)/)?.[1]
+    const second = run(root, ['package']).stdout.match(/sha256 ([0-9a-f]+)/)?.[1]
+    assert.ok(first, 'package printed a hash')
+    assert.equal(first, second)
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test('a non-HTTPS endpoint is refused before the token is used', { skip }, async () => {
+  const root = await fixture({ version: '3.3.0' })
+  try {
+    const result = run(root, ['status', '--endpoint', 'http://evil.example/mcp'])
+    assert.equal(result.code, 2)
+    assert.match(result.stderr, /HTTPS is required/)
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})

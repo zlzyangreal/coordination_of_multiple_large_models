@@ -4,7 +4,7 @@
 
 - 仓库：<https://github.com/zlzyangreal/coordination_of_multiple_large_models>
 - 版本：3.3.0（2026-11-18）
-- 当前离线自测：373 项（mock providers，不联网）；Node 测试 105 项
+- 当前离线自测：373 项（mock providers，不联网）；Node 测试 107 项
 - 上一代：`多模型协作Spec.md` v2.4.1，已冻结，仅作留档
 
 ## 能力一览

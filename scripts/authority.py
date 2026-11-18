@@ -1787,8 +1787,9 @@ def _guard_impl(project, op, path=None, model=None, agent="lead", plugin=None,
         0, "allowed", level=level, key=key,
         decision_id=decision.get("id") if decision else None,
         # The approved artifact hash travels with the decision so a publisher can refuse to ship
-        # bytes the user never saw (only decisions recorded with --artifact carry it).
-        artifact_hash=decision.get("artifact_hash") if decision else None,
+        # bytes the user never saw. `command_decide` stores it as artifact_sha256.
+        artifact_hash=(decision.get("artifact_hash") or decision.get("artifact_sha256"))
+        if decision else None,
         scope_root=scope_root, mode=control.get("mode"),
         mandate_hash=mandate["mandate_hash"], reservation_id=reservation,
         work_package=work_package, direction_key=dkey, path=relative,

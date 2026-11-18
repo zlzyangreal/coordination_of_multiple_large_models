@@ -27,6 +27,14 @@ Agensi listing: a portable protocol layer, synced on minor and major versions on
   更新调用绝不自动重试；`--preview` 必须带 `--yes`，且只对首次提交有效。
 - **信封绑定修正**：已晋升的迭代不再把旧 candidate commit 当作 `target_commit`，否则每次评审都会在
   "证据 commit 与信封 target 不一致"上被判无效（57dc3dd vs fcc4a35）。
+- **第二轮评审后的加固**（AGENSI-001～008）：批准改成绑定 zip 的字节——`decide --artifact <zip>`，
+  guard 返回该 hash，发布时用**同一个包对象**重新打包并比对（zip 固定时间戳，确定性构建）；
+  guard 读取决策里实际存储的 `artifact_sha256`（此前读错字段，导致合法批准永远不可用）；
+  打印与文档里的批准命令同时带 `--approval-ref` 与 `--artifact`；`--preview` 不再写待定标记，
+  并把 `draft_id` 存盘供下一次确认同一草稿；锁提前到读取状态之前并在锁内重算决策；
+  `--resolve-pending` 先查远端对账，未落地还要 `--reissue` 才重发；endpoint 强制 HTTPS
+  （仅 loopback 允许 HTTP）；`agensi/skill` 本身是符号链接也拒绝。
+  AGENSI-009（中文速览乱码）经源码核对不成立：文件是合法 UTF-8，评审侧按控制台编码读取导致误判，记录为驳回。
 
 ## 3.2.0 - 2026-11-17
 

@@ -170,7 +170,12 @@ def set_front_matter_version(text: str, version: str) -> str:
 
 def build_package(root: Path, version: str) -> dict:
     """Collect the Agensi skill folder into [{path, content}] with the release version stamped in."""
-    skill_dir = (root / "agensi" / "skill").resolve()
+    raw_skill = root / "agensi" / "skill"
+    if raw_skill.is_symlink():
+        raise PublishError("agensi/skill must be a real directory, not a symlink")
+    skill_dir = raw_skill.resolve()
+    if root.resolve() not in skill_dir.parents:
+        raise PublishError(f"agensi/skill resolves outside the repository: {skill_dir}")
     if not (skill_dir / "SKILL.md").is_file():
         raise PublishError(f"missing {skill_dir / 'SKILL.md'}")
     files: list[dict] = []
@@ -250,17 +255,68 @@ def changelog_for(root: Path, version: str) -> str:
     return (body[:1997] + "...") if len(body) > 2000 else body
 
 
-def build_zip(root: Path, version: str) -> Path:
+def build_zip(root: Path, version: str, pkg: dict | None = None) -> Path:
+    """Write the approval artifact from the exact package object that will be uploaded."""
     import zipfile
-    pkg = build_package(root, version)
+    pkg = pkg or build_package(root, version)
     out_dir = root / "_work" / "agensi"
     out_dir.mkdir(parents=True, exist_ok=True)
     slug = re.sub(r"[^a-z0-9]+", "-", (pkg["meta"].get("name") or "skill").lower()).strip("-")
     out = out_dir / f"{slug}-{version}.zip"
     with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as zf:
         for item in pkg["files"]:
-            zf.writestr(item["path"], item["content"])
+            # Fixed timestamps: the zip hash is the approval binding, so two builds of the same
+            # package must produce identical bytes (zipfile otherwise stamps the current time).
+            info = zipfile.ZipInfo(item["path"], date_time=(1980, 1, 1, 0, 0, 0))
+            info.compress_type = zipfile.ZIP_DEFLATED
+            info.external_attr = 0o644 << 16
+            zf.writestr(info, item["content"].encode("utf-8"))
     return out
+
+
+def draft_path(root: Path, version: str) -> Path:
+    return root / "_work" / "agensi" / f"draft-{version}.json"
+
+
+def load_draft(root: Path, version: str, package_hash: str) -> str | None:
+    path = draft_path(root, version)
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    if data.get("package_hash") != package_hash:
+        return None
+    return str(data.get("draft_id") or "") or None
+
+
+def save_draft(root: Path, version: str, draft_id: str, package_hash: str) -> None:
+    path = draft_path(root, version)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({"draft_id": draft_id, "package_hash": package_hash,
+                                "version": version,
+                                "saved_at": time.strftime("%Y-%m-%dT%H:%M:%S%z")},
+                               indent=2) + "\n", encoding="utf-8")
+
+
+def remote_listing(client: "McpClient", name: str, slug: str | None) -> dict:
+    """The listing as the server reports it; used to reconcile an ambiguous mutation."""
+    try:
+        result = client.call("my_skills", {})
+    except PublishError:
+        return {}
+    data = result.get("data")
+    if isinstance(data, dict):
+        entries = data.get("skills")
+    else:
+        entries = data
+    for entry in entries or []:
+        if not isinstance(entry, dict):
+            continue
+        if slug and entry.get("slug") == slug:
+            return entry
+        if name and str(entry.get("name", "")).lower() == name.lower():
+            return entry
+    return {}
 
 
 # ----------------------------------------------------------------------------- state / token
@@ -690,7 +746,18 @@ def cmd_package(root: Path, args) -> int:
     return 0
 
 
+def _validate_endpoint(endpoint: str) -> None:
+    """A bearer token may not be sent to an arbitrary host, and never over plain HTTP."""
+    parsed = urllib.parse.urlparse(endpoint)
+    host = (parsed.hostname or "").lower()
+    loopback = host in {"127.0.0.1", "localhost", "::1"}
+    if parsed.scheme != "https" and not (loopback and parsed.scheme == "http"):
+        raise PublishError(f"refusing to send the Agensi token to {endpoint!r}: "
+                           "HTTPS is required (HTTP only for loopback tests)")
+
+
 def connect(root: Path, endpoint: str) -> McpClient:
+    _validate_endpoint(endpoint)
     token = usable_token(root)
     client = McpClient(endpoint, token)
     try:
@@ -778,13 +845,16 @@ def workflow_gate(root: Path, version: str, package_hash: str,
                        "approval before publishing; disabled governance is not permission.")
     if not info.get("allowed") or info.get("level") != "L1" or not info.get("decision_id"):
         reason = info.get("reason") or "no accepted L1 decision"
+        approval = f"_work/approvals/publish-{version}.md"
         return False, (
             f"workflow gate: publish {version} refused (code {code}: {reason}).\n"
-            "Record the user's approval first, after they said yes:\n"
+            "Record the user's approval first, after they said yes. Write their words to "
+            f"{approval}, then run:\n"
             f'  python scripts/authority.py decide --kind publish --subject {version} '
             f'--topic "Agensi publish {version}" --proposal "publish the Agensi listing '
             f'(package {package_hash[:12]})" '
             f'--decision accept --by user --reason "user approved this release" '
+            f'--approval-ref {approval} '
             f'--artifact {_rel(root, artifact)}')
     approved = info.get("artifact_hash")
     actual = hashlib.sha256(artifact.read_bytes()).hexdigest()
@@ -824,6 +894,14 @@ def cmd_status(root: Path, args) -> int:
         result = client.call(tool, {})
         print(f"== {tool} ==\n{result['text']}\n")
     return 0
+
+
+def _write_pending(path: Path, version: str, package_hash: str, action: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({
+        "version": version, "package_hash": package_hash, "action": action,
+        "started_at": time.strftime("%Y-%m-%dT%H:%M:%S%z")}, indent=2) + "\n",
+        encoding="utf-8")
 
 
 def cmd_sync(root: Path, args) -> int:
@@ -869,70 +947,91 @@ def cmd_sync(root: Path, args) -> int:
         print("[FAIL] an update has no non-mutating preview; drop --preview", file=sys.stderr)
         return 2
 
-    # The zip is what the user approves: its hash is bound into the L1 decision and re-checked
-    # here, so a decision cannot be reused for a different package.
-    zip_path = build_zip(root, version)
-    ok, detail = workflow_gate(root, version, pkg["hash"], zip_path)
-    if not ok:
-        print(f"[STOP] {detail}", file=sys.stderr)
-        return 4
-    print(f"gate           ok ({detail})")
-    print(f"artifact       {_rel(root, zip_path)}")
-
     lock = _sync_lock(root)
-    pending = root / "_work" / "agensi" / f"pending-{version}.json"
     try:
-        if pending.exists():
-            if not args.resolve_pending:
-                raise PublishError(
-                    f"an earlier {version} publish did not finish ({pending}).\n"
-                    "Check `status` to see whether it landed; then re-run with --resolve-pending")
-            pending.unlink()
-        pending.write_text(json.dumps({
-            "version": version, "package_hash": pkg["hash"], "action": decision["action"],
-            "started_at": time.strftime("%Y-%m-%dT%H:%M:%S%z")}, indent=2) + "\n",
-            encoding="utf-8")
+        # Re-read under the lock: another run may have published while this one was planning.
+        state = load_state(root)
+        decision = decide(state.get("version"), version)
+        if args.force and decision["action"] == "skip":
+            decision = {"action": "update", "last": state.get("version"), "current": version,
+                        "reason": f"patch sync forced ({decision['reason']})"}
+        if decision["action"] in ("none", "skip"):
+            print(f"[{decision['action']}] {decision['reason']} (under the lock)")
+            return 0
+
+        # The zip is what the user approves: its hash is bound into the L1 decision and re-checked
+        # here, and it is built from the same package object that will be uploaded.
+        zip_path = build_zip(root, version, pkg)
+        ok, detail = workflow_gate(root, version, pkg["hash"], zip_path)
+        if not ok:
+            print(f"[STOP] {detail}", file=sys.stderr)
+            return 4
+        print(f"gate           ok ({detail})")
+        print(f"artifact       {_rel(root, zip_path)}")
 
         client = connect(root, args.endpoint)
         creator = client.call("creator_status", {})
         print("creator_status: " + (creator["text"] or "(empty)"))
 
-        if decision["action"] == "submit":
-            preview = client.call("submit_skill", {**fields, "files": pkg["files"]})
-            print(preview["text"])
-            draft = _extract(preview, ("draft_id", "draftId"))
-            if args.preview:
-                print("(preview only; draft kept for 7 days)")
+        pending = root / "_work" / "agensi" / f"pending-{version}.json"
+        if pending.exists():
+            if not args.resolve_pending:
+                raise PublishError(
+                    f"an earlier {version} publish did not finish ({pending}).\n"
+                    "Check `status`; if the listing already shows this version, re-run with "
+                    "--resolve-pending to record it, otherwise add --reissue to publish again")
+            remote = remote_listing(client, listing["name"], state.get("slug"))
+            if str(remote.get("version") or "") == version:
+                save_state(root, {
+                    "schema": 1, "slug": remote.get("slug") or state.get("slug") or "",
+                    "name": listing["name"], "version": version,
+                    "package_hash": pkg["hash"], "action": "reconciled",
+                    "published_at": time.strftime("%Y-%m-%dT%H:%M:%S%z")})
+                pending.unlink(missing_ok=True)
+                print(f"[OK] {version} already landed on Agensi; local state reconciled")
                 return 0
+            if not args.reissue:
+                raise PublishError(
+                    "the pending marker is not confirmed by the remote listing; refusing to "
+                    "issue a second mutation. Re-run with --reissue if the first one never landed")
+            pending.unlink()
+
+        slug = state.get("slug") or args.slug
+        if decision["action"] == "submit":
+            draft = load_draft(root, version, pkg["hash"])
             if not draft:
-                raise PublishError("submit_skill returned no draft_id; cannot confirm")
+                preview = client.call("submit_skill", {**fields, "files": pkg["files"]})
+                print(preview["text"])
+                draft = _extract(preview, ("draft_id", "draftId"))
+                if not draft:
+                    raise PublishError("submit_skill returned no draft_id; cannot confirm")
+                save_draft(root, version, draft, pkg["hash"])
+            if args.preview:
+                print("(preview only; the next `sync --yes` confirms this same draft)")
+                return 0
+            _write_pending(pending, version, pkg["hash"], decision["action"])
             final = client.call("submit_skill", {"draft_id": draft, "confirm": True})
             print(final["text"])
             slug = _extract(final, ("slug", "skill_slug")) or _find_slug(client, listing["name"])
             action = "submitted"
         else:
-            slug = state.get("slug") or args.slug
             if not slug:
                 slug = _find_slug(client, listing["name"])
             if not slug:
                 raise PublishError("no slug recorded and none found in my_skills; pass --slug")
             changelog = changelog_for(root, version)
+            _write_pending(pending, version, pkg["hash"], decision["action"])
             final = client.call("update_skill", {"skill_slug": slug, "version": version,
                                                  "changelog": changelog, "files": pkg["files"]})
             print(final["text"])
             action = "updated"
 
-        state = {
-            "schema": 1,
-            "slug": slug,
-            "name": listing["name"],
-            "version": version,
-            "package_hash": pkg["hash"],
-            "published_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
-            "action": action,
-        }
-        save_state(root, state)
+        save_state(root, {
+            "schema": 1, "slug": slug, "name": listing["name"], "version": version,
+            "package_hash": pkg["hash"], "published_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+            "action": action})
         pending.unlink(missing_ok=True)
+        draft_path(root, version).unlink(missing_ok=True)
         print(f"[OK] {action} {slug} -> {version}; state written to {state_path(root)}")
         return 0
     finally:
@@ -1028,6 +1127,8 @@ def main(argv: list[str] | None = None) -> int:
     p_sync.add_argument("--preview", action="store_true", help="submit preview, do not confirm")
     p_sync.add_argument("--resolve-pending", action="store_true",
                         help="clear an unfinished publish marker after checking `status`")
+    p_sync.add_argument("--reissue", action="store_true",
+                        help="with --resolve-pending: publish again when the remote did not land")
     p_sync.add_argument("--force", action="store_true", help="allow a patch-only sync")
     p_sync.add_argument("--slug", help="existing listing slug (skips discovery)")
     p_sync.add_argument("--json", action="store_true")
