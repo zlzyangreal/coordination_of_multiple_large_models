@@ -35,6 +35,11 @@ Agensi listing: a portable protocol layer, synced on minor and major versions on
   `--resolve-pending` 先查远端对账，未落地还要 `--reissue` 才重发；endpoint 强制 HTTPS
   （仅 loopback 允许 HTTP）；`agensi/skill` 本身是符号链接也拒绝。
   AGENSI-009（中文速览乱码）经源码核对不成立：文件是合法 UTF-8，评审侧按控制台编码读取导致误判，记录为驳回。
+- **第三轮评审后的加固**（AGENSI-010～012）：endpoint 只允许 `https://mcp.agensi.io`（loopback 测试需
+  显式 `AGENSI_ALLOW_LOOPBACK=1`），不再接受任意 HTTPS 主机；Windows 下 token 用 `icacls` 去掉继承
+  并只授权当前用户/SYSTEM/Administrators，校验失败即拒绝保留（此前 `chmod` 在 Windows 上不生效）；
+  锁内重算后补上 `refuse` 分支，避免并发降级；AGENSI-013（成功路径的 MCP 假服务器测试）记为待办、
+  不属于阻塞项。
 
 ## 3.2.0 - 2026-11-17
 

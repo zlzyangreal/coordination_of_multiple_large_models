@@ -204,7 +204,18 @@ test('a non-HTTPS endpoint is refused before the token is used', { skip }, async
   try {
     const result = run(root, ['status', '--endpoint', 'http://evil.example/mcp'])
     assert.equal(result.code, 2)
-    assert.match(result.stderr, /HTTPS is required/)
+    assert.match(result.stderr, /only https:\/\/mcp\.agensi\.io is allowed/)
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test('an HTTPS endpoint on another host is refused too', { skip }, async () => {
+  const root = await fixture({ version: '3.3.0' })
+  try {
+    const result = run(root, ['status', '--endpoint', 'https://evil.example/mcp'])
+    assert.equal(result.code, 2)
+    assert.match(result.stderr, /only https:\/\/mcp\.agensi\.io is allowed/)
   } finally {
     await rm(root, { recursive: true, force: true })
   }

@@ -382,6 +382,29 @@ def save_token(root: Path, token: dict) -> None:
     finally:
         if os.path.exists(tmp):
             os.unlink(tmp)
+    _restrict_token_acl(path)
+
+
+def _restrict_token_acl(path: Path) -> None:
+    """On Windows, mode bits do not restrict ACLs; drop inheritance and grant only this user."""
+    if os.name != "nt":
+        return
+    user = os.environ.get("USERNAME") or ""
+    if not user:
+        raise PublishError("cannot determine the current Windows user to secure the token file")
+    args = ["icacls", str(path), "/inheritance:r"]
+    # Full control for the owner: os.replace needs DELETE on the target, so R,W would make the
+    # next atomic token refresh fail with WinError 5 (observed in practice).
+    for who in (user, "SYSTEM", "Administrators"):
+        args += ["/grant:r", f"{who}:(F)"]
+    proc = subprocess.run(args, capture_output=True, text=True)
+    if proc.returncode != 0:
+        raise PublishError(f"cannot restrict the token ACL: {proc.stderr or proc.stdout}")
+    check = subprocess.run(["icacls", str(path)], capture_output=True, text=True)
+    # "(I)" marks an inherited ACE in every locale; any survivor means other users keep access.
+    if check.returncode == 0 and "(I)" in (check.stdout or ""):
+        raise PublishError("the token file still carries inherited permissions; refusing to keep "
+                           f"it at {path}")
 
 
 # ----------------------------------------------------------------------------- http
@@ -747,13 +770,16 @@ def cmd_package(root: Path, args) -> int:
 
 
 def _validate_endpoint(endpoint: str) -> None:
-    """A bearer token may not be sent to an arbitrary host, and never over plain HTTP."""
+    """The bearer token only ever goes to Agensi itself (loopback HTTP for tests, opt-in)."""
     parsed = urllib.parse.urlparse(endpoint)
     host = (parsed.hostname or "").lower()
     loopback = host in {"127.0.0.1", "localhost", "::1"}
-    if parsed.scheme != "https" and not (loopback and parsed.scheme == "http"):
+    if loopback and parsed.scheme == "http" and os.environ.get("AGENSI_ALLOW_LOOPBACK") == "1":
+        return
+    if parsed.scheme != "https" or host != "mcp.agensi.io":
         raise PublishError(f"refusing to send the Agensi token to {endpoint!r}: "
-                           "HTTPS is required (HTTP only for loopback tests)")
+                           "only https://mcp.agensi.io is allowed "
+                           "(set AGENSI_ALLOW_LOOPBACK=1 for a loopback test server)")
 
 
 def connect(root: Path, endpoint: str) -> McpClient:
@@ -958,6 +984,10 @@ def cmd_sync(root: Path, args) -> int:
         if decision["action"] in ("none", "skip"):
             print(f"[{decision['action']}] {decision['reason']} (under the lock)")
             return 0
+        if decision["action"] == "refuse":
+            print(f"[FAIL] {decision['reason']} (under the lock); refusing to publish",
+                  file=sys.stderr)
+            return 5
 
         # The zip is what the user approves: its hash is bound into the L1 decision and re-checked
         # here, and it is built from the same package object that will be uploaded.
